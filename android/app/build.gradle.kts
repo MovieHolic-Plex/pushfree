@@ -2,6 +2,7 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.ksp)
 }
 
 android {
@@ -33,6 +34,14 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
+    // Robolectric needs merged resources to build a working Android Context on JVM
+    // (required for Room.inMemoryDatabaseBuilder in plain unit tests).
+    testOptions {
+        unitTests {
+            isIncludeAndroidResources = true
+        }
+    }
+
     // Kotlin toolchain: compile Kotlin with JDK 17 (matches daemon JVM).
     kotlin {
         jvmToolchain(17)
@@ -60,5 +69,15 @@ dependencies {
     implementation(libs.androidx.material3)
     debugImplementation(libs.androidx.ui.tooling)
 
+    // Room data layer (compiler processed by KSP to match Kotlin 2.0.21)
+    implementation(libs.androidx.room.runtime)
+    implementation(libs.androidx.room.ktx)
+    ksp(libs.androidx.room.compiler)
+
     testImplementation(libs.junit)
+    testImplementation(libs.androidx.room.testing)
+    testImplementation(libs.robolectric)
+    testImplementation(libs.androidx.test.core)
+    testImplementation(libs.androidx.test.ext.junit)
+    testImplementation(libs.kotlinx.coroutines.test)
 }
