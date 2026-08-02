@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/pushfree/pushfree/internal/config"
+	"github.com/pushfree/pushfree/internal/webmount"
 )
 
 // Server is the pushfree HTTP server. It embeds an http.Handler (the mux) so
@@ -26,11 +27,16 @@ type Server struct {
 	srv *http.Server
 }
 
-// New builds a Server with the /health route registered. All other paths 404.
-// Additional route groups (e.g. the accounts API) register on Mux().
+// New builds a Server with the dependency-free routes registered: the
+// /health liveness probe and the webmount dashboard (/admin/ embed +
+// /api/ JSON 404 envelope). Route groups that need external collaborators
+// (the accounts API under /v1/, which needs the store Repos and auth
+// secret) are mounted by the caller on Mux() after construction; that keeps
+// this package free of store/secret wiring.
 func New(cfg *config.Config, logger *slog.Logger) *Server {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", health)
+	webmount.Register(mux)
 	return &Server{
 		cfg:     cfg,
 		logger:  logger,
