@@ -1,3 +1,5 @@
 <resources>
     <string name="app_name">Pushfree</string>
+    <string name="notification_default_title">Pushfree</string>
+    <string name="notification_action_ack">Acknowledge</string>
 </resources>

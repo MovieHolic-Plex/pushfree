@@ -2,6 +2,12 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!-- API 33+: runtime permission to post notifications. Notifications are
+         still built regardless of grant state; this only governs display. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- API 34+: full-screen intent for emergency-priority messages. -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+
     <application
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
@@ -22,6 +28,14 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <receiver
+            android:name=".notifications.NotificationActionReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="net.pushfree.android.action.ACK" />
+            </intent-filter>
+        </receiver>
     </application>
 
 </manifest>

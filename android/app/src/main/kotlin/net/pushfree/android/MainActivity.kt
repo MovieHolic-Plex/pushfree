@@ -13,6 +13,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
+import net.pushfree.android.notifications.Notifications
 import net.pushfree.android.ui.theme.PushfreeTheme
 
 /**
@@ -22,6 +23,9 @@ import net.pushfree.android.ui.theme.PushfreeTheme
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Channels must exist before any notification is posted; create them at
+        // process start so FCM/UnifiedPush/WorkManager posters can rely on them.
+        Notifications.ensureChannels(this)
         enableEdgeToEdge()
         setContent {
             PushfreeTheme {
