@@ -77,6 +77,9 @@ dependencies {
     // Resilient ack outbox (todo 33): network-constrained retried ack POSTs.
     implementation(libs.androidx.work.runtime.ktx)
 
+    // WebSocket transport (todo 29): OkHttp provides the WS client + timeouts.
+    implementation(libs.okhttp)
+
     testImplementation(libs.junit)
     testImplementation(libs.androidx.room.testing)
     testImplementation(libs.robolectric)
@@ -84,4 +87,6 @@ dependencies {
     testImplementation(libs.androidx.test.ext.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.androidx.work.testing)
+    // MockWebServer drives the WS transport against a scripted in-process server.
+    testImplementation(libs.mockwebserver)
 }

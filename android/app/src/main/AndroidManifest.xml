@@ -2,11 +2,20 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!-- Network access for the WS transport + ack outbox. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- API 33+: runtime permission to post notifications. Notifications are
          still built regardless of grant state; this only governs display. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- API 34+: full-screen intent for emergency-priority messages. -->
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <!-- Foreground service hosting the persistent WS connection (doze survival). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Request the battery-optimization exemption prompt for the WS transport. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <application
         android:allowBackup="true"
@@ -36,6 +45,15 @@
                 <action android:name="net.pushfree.android.action.ACK" />
             </intent-filter>
         </receiver>
+
+        <!-- Persistent foreground service that holds the WebSocket connection
+             open across doze so the server keepalive/replay path stays live.
+             dataSync is the Android 14+ type for a long-running sync/messaging
+             connection (ntfy pattern). -->
+        <service
+            android:name=".ws.WsForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
     </application>
 
 </manifest>

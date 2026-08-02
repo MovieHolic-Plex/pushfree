@@ -2,4 +2,11 @@
     <string name="app_name">Pushfree</string>
     <string name="notification_default_title">Pushfree</string>
     <string name="notification_action_ack">Acknowledge</string>
+
+    <!-- Foreground WS service: persistent status notification + its channel. -->
+    <string name="ws_channel_name">Connection</string>
+    <string name="ws_channel_description">Keeps the pushfree connection live in the background</string>
+    <string name="ws_status_connecting">Connecting…</string>
+    <string name="ws_status_connected">Connected</string>
+    <string name="ws_status_reconnecting">Reconnecting…</string>
 </resources>
