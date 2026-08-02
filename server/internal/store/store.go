@@ -217,6 +217,13 @@ type AppRepo interface {
 type DeviceRepo interface {
 	Create(ctx context.Context, d *Device) (int64, error)
 	GetByDeviceID(ctx context.Context, deviceID string) (Device, error)
+
+	// ClearFCMToken nulls the fcm_token of the device with the given
+	// device_id. Called by the FCM delivery channel (todo 16) when FCM
+	// reports the token as UNREGISTERED or INVALID_ARGUMENT, so the device
+	// must re-register before it can receive FCM again. It is not an error
+	// if the device has no token or does not exist (idempotent clear).
+	ClearFCMToken(ctx context.Context, deviceID string) error
 }
 
 // Fanout is the atomic unit of an API ingest: one send row, N per-recipient
