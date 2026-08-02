@@ -7,14 +7,17 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/pushfree/pushfree/internal/api"
 	"github.com/pushfree/pushfree/internal/config"
+	"github.com/pushfree/pushfree/internal/retention"
 	"github.com/pushfree/pushfree/internal/server"
 	"github.com/pushfree/pushfree/internal/store/sqlite"
 )
@@ -53,6 +56,32 @@ func run() error {
 	}
 	defer func() { _ = st.Close() }()
 
+	// Retention sweeper: hourly message/attachment/TTL cleanup. A malformed
+	// duration fails loudly here rather than at the first sweep.
+	sweeper, err := retention.NewSweeper(st, retention.SystemClock{},
+		cfg.SweeperInterval, cfg.MessagesRetention, cfg.AttachmentRetention, logger)
+	if err != nil {
+		return fmt.Errorf("retention sweeper: %w", err)
+	}
+	sweeperDone := make(chan struct{})
+	go func() {
+		defer close(sweeperDone)
+		_ = sweeper.Run(ctx)
+	}()
+
+	// Windows/testing graceful-stop path. POSIX SIGTERM cannot be delivered
+	// to a Windows console child process (os.Process.Signal is unsupported
+	// and taskkill posts WM_CLOSE, which console apps never see), so when
+	// this flag is set, closing stdin cancels the root context exactly like
+	// SIGTERM/SIGINT. Leave false in normal operation.
+	if cfg.ShutdownOnStdinEOF {
+		go func() {
+			io.Copy(io.Discard, os.Stdin)
+			logger.Info("stdin eof; initiating graceful shutdown")
+			stop()
+		}()
+	}
+
 	// Stateful sessions need a stable signing secret; a config secret persists
 	// across restarts. With none set, a random one is generated per process and
 	// all outstanding sessions are invalidated on the next restart.
@@ -68,9 +97,33 @@ func run() error {
 
 	srv := server.New(cfg, logger)
 	api.New(st.Repos(), authSecret, 0, logger).Register(srv.Mux())
-	srv.MountRealtime(st.Repos(), authSecret)
 	logger.Info("starting pushfree server", "listen-addr", cfg.ListenAddr, "tls", cfg.TLSCertFile != "")
 	err = srv.Run(ctx)
+
+	// server.Run has drained HTTP (capped at 10s internally on ctx cancel).
+	// Release the sweeper (on a startup-bind failure ctx is not yet canceled)
+	// and wait for it to stop touching the database before the checkpoint.
+	stop()
+	<-sweeperDone
+
+	// WAL checkpoint as the shutdown tail: bounded by shutdown-timeout so the
+	// whole stop stays inside the 10s budget on an idle server. The logged
+	// result is the WAL-checkpoint evidence required by the SIGTERM test.
+	shutdownTimeout, perr := time.ParseDuration(cfg.ShutdownTimeout)
+	if perr != nil {
+		logger.Error("invalid shutdown-timeout; using fallback", "raw", cfg.ShutdownTimeout, "err", perr)
+		shutdownTimeout = 10 * time.Second
+	}
+	checkpointCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	res, cpErr := st.WALCheckpoint(checkpointCtx)
+	cancel()
+	if cpErr != nil {
+		logger.Error("shutdown wal checkpoint failed", "err", cpErr)
+	} else {
+		logger.Info("shutdown wal checkpoint complete",
+			"busy", res.Busy, "log", res.Log, "checkpointed", res.Checkpointed)
+	}
+
 	if errors.Is(err, http.ErrServerClosed) {
 		return nil
 	}

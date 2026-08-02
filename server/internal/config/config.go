@@ -34,6 +34,10 @@ type Config struct {
 	KeepaliveInterval    string   `toml:"keepalive-interval"`
 	QuotaMonthly         int      `toml:"quota-monthly"`
 	MessagesRetention    string   `toml:"messages-retention"`
+	AttachmentRetention  string   `toml:"attachment-retention"`
+	SweeperInterval      string   `toml:"sweeper-interval"`
+	ShutdownTimeout      string   `toml:"shutdown-timeout"`
+	ShutdownOnStdinEOF   bool     `toml:"shutdown-on-stdin-eof"`
 	CallbackAllowedHosts []string `toml:"callback-allowed-hosts"`
 	AuthSecret           string   `toml:"auth-secret"`
 }
@@ -41,17 +45,24 @@ type Config struct {
 // defaults returns a Config populated with the documented default values.
 func defaults() Config {
 	return Config{
-		Version:              SchemaVersion,
-		ListenAddr:           ":2586",
-		TLSCertFile:          "",
-		TLSKeyFile:           "",
-		BaseURL:              "",
-		DBFile:               "pushfree.db",
-		DBURL:                "",
-		FCMCredentialsFile:   "",
-		KeepaliveInterval:    "45s",
-		QuotaMonthly:         10000,
-		MessagesRetention:    "720h",
+		Version:            SchemaVersion,
+		ListenAddr:         ":2586",
+		TLSCertFile:        "",
+		TLSKeyFile:         "",
+		BaseURL:            "",
+		DBFile:             "pushfree.db",
+		DBURL:              "",
+		FCMCredentialsFile: "",
+		KeepaliveInterval:  "45s",
+		QuotaMonthly:       10000,
+		MessagesRetention:  "720h",
+		// AttachmentRetention: Pushover drops undownloaded attachments
+		// after 3 days; we match that. 30d message retention vs Pushover's
+		// 21d is a documented deviation (see internal/store/sqlite/retention.go).
+		AttachmentRetention:  "72h",
+		SweeperInterval:      "1h",
+		ShutdownTimeout:      "10s",
+		ShutdownOnStdinEOF:   false,
 		CallbackAllowedHosts: []string{},
 	}
 }
@@ -127,6 +138,22 @@ func applyEnv(cfg *Config, env LookupEnv) error {
 	}
 	if v, ok := env("PUSHFREE_MESSAGES_RETENTION"); ok {
 		cfg.MessagesRetention = v
+	}
+	if v, ok := env("PUSHFREE_ATTACHMENT_RETENTION"); ok {
+		cfg.AttachmentRetention = v
+	}
+	if v, ok := env("PUSHFREE_SWEEPER_INTERVAL"); ok {
+		cfg.SweeperInterval = v
+	}
+	if v, ok := env("PUSHFREE_SHUTDOWN_TIMEOUT"); ok {
+		cfg.ShutdownTimeout = v
+	}
+	if v, ok := env("PUSHFREE_SHUTDOWN_ON_STDIN_EOF"); ok {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return fmt.Errorf("PUSHFREE_SHUTDOWN_ON_STDIN_EOF %q: %w", v, err)
+		}
+		cfg.ShutdownOnStdinEOF = b
 	}
 	if v, ok := env("PUSHFREE_CALLBACK_ALLOWED_HOSTS"); ok {
 		parts := strings.Split(v, ",")

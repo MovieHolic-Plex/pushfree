@@ -41,6 +41,25 @@ quota-monthly = 10000
 # How long delivered messages are retained before the sweeper deletes them.
 messages-retention = "720h"
 
+# How long an undownloaded attachment's BLOB is kept. After this the bytes are
+# deleted but the attachment row survives (so clients still see it existed).
+# Pushover drops undownloaded attachments after 3 days; we match that.
+attachment-retention = "72h"
+
+# How often the retention sweeper runs (message expiry, attachment-BLOB expiry,
+# and TTL discard). A sweep also runs once immediately at startup.
+sweeper-interval = "1h"
+
+# Budget for the graceful-shutdown tail (in particular the WAL checkpoint)
+# after SIGTERM/SIGINT. The HTTP drain is capped separately.
+shutdown-timeout = "10s"
+
+# Windows/testing aid: when true, closing the process's stdin initiates the
+# same graceful shutdown as SIGTERM/SIGINT. Windows cannot deliver a POSIX
+# SIGTERM to a console child process, so this is the documented equivalent
+# used by supervisors/tests. Leave false in normal operation.
+shutdown-on-stdin-eof = false
+
 # Hosts permitted as receipt callback targets. Private/loopback addresses stay
 # blocked by default; list public hosts you trust here.
 callback-allowed-hosts = []

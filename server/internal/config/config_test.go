@@ -42,6 +42,18 @@ func TestLoadDefaultsNoFile(t *testing.T) {
 	if cfg.MessagesRetention != "720h" {
 		t.Errorf("default messages-retention = %q, want 720h", cfg.MessagesRetention)
 	}
+	if cfg.AttachmentRetention != "72h" {
+		t.Errorf("default attachment-retention = %q, want 72h", cfg.AttachmentRetention)
+	}
+	if cfg.SweeperInterval != "1h" {
+		t.Errorf("default sweeper-interval = %q, want 1h", cfg.SweeperInterval)
+	}
+	if cfg.ShutdownTimeout != "10s" {
+		t.Errorf("default shutdown-timeout = %q, want 10s", cfg.ShutdownTimeout)
+	}
+	if cfg.ShutdownOnStdinEOF {
+		t.Errorf("default shutdown-on-stdin-eof = true, want false")
+	}
 	if len(cfg.CallbackAllowedHosts) != 0 {
 		t.Errorf("default callback-allowed-hosts = %v, want empty", cfg.CallbackAllowedHosts)
 	}
@@ -183,6 +195,37 @@ tls-key-file = "key.pem"`)
 	}
 	if cfg.TLSCertFile != "cert.pem" || cfg.TLSKeyFile != "key.pem" {
 		t.Errorf("tls fields = %q / %q", cfg.TLSCertFile, cfg.TLSKeyFile)
+	}
+}
+
+func TestEnvRetentionOverrides(t *testing.T) {
+	cfg, err := Load("", func(key string) (string, bool) {
+		switch key {
+		case "PUSHFREE_ATTACHMENT_RETENTION":
+			return "12h", true
+		case "PUSHFREE_SWEEPER_INTERVAL":
+			return "30m", true
+		case "PUSHFREE_SHUTDOWN_TIMEOUT":
+			return "15s", true
+		case "PUSHFREE_SHUTDOWN_ON_STDIN_EOF":
+			return "1", true
+		}
+		return "", false
+	})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.AttachmentRetention != "12h" {
+		t.Errorf("attachment-retention = %q, want 12h", cfg.AttachmentRetention)
+	}
+	if cfg.SweeperInterval != "30m" {
+		t.Errorf("sweeper-interval = %q, want 30m", cfg.SweeperInterval)
+	}
+	if cfg.ShutdownTimeout != "15s" {
+		t.Errorf("shutdown-timeout = %q, want 15s", cfg.ShutdownTimeout)
+	}
+	if !cfg.ShutdownOnStdinEOF {
+		t.Errorf("shutdown-on-stdin-eof = false, want true")
 	}
 }
 
