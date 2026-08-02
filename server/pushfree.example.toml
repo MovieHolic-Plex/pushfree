@@ -44,3 +44,8 @@ messages-retention = "720h"
 # Hosts permitted as receipt callback targets. Private/loopback addresses stay
 # blocked by default; list public hosts you trust here.
 callback-allowed-hosts = []
+
+# Secret used to sign stateless session cookies (HMAC-SHA256). Set a stable
+# value so logins survive restarts; leave empty to generate a random per-process
+# secret (a WARN is logged, and all sessions invalidate on restart).
+auth-secret = ""

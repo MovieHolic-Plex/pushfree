@@ -179,6 +179,18 @@ type DLQ struct {
 // UserRepo covers account lookup and creation.
 type UserRepo interface {
 	Create(ctx context.Context, u *User) (int64, error)
+	// CreateBootstrap inserts u, assigning role="admin" if it is the first
+	// user and "user" otherwise. The role is computed from the current user
+	// count inside the same atomic statement that inserts, so two concurrent
+	// first-time registrations cannot both become admin (SQLite serializes
+	// writers; the CASE subquery runs under the write lock). It overwrites
+	// u.Role and u.ID. Email/PassHash/UserKey/CreatedAt must be set by the
+	// caller; QuietTZ defaults to "UTC" when empty.
+	CreateBootstrap(ctx context.Context, u *User) (int64, error)
+	// UpdateQuietHours persists a user's quiet-hours window. Pass "" for
+	// quietStart/quietEnd to clear the window (NULL); tz must be non-empty
+	// and defaults to "UTC" when empty. Returns ErrNotFound if id is absent.
+	UpdateQuietHours(ctx context.Context, id int64, quietStart, quietEnd, tz string) error
 	GetByID(ctx context.Context, id int64) (User, error)
 	GetByEmail(ctx context.Context, email string) (User, error)
 	GetByUserKey(ctx context.Context, userKey string) (User, error)
@@ -216,6 +228,18 @@ type SendRepo interface {
 // MessageRepo covers per-recipient delivery queries.
 type MessageRepo interface {
 	ListSince(ctx context.Context, recipientUserID int64, afterID int64, limit int) ([]Message, error)
+
+	// MarkDelivered records the first transport-accepted delivery time on a
+	// message row. It is a no-op when delivered_at is already set, so it is
+	// safe to call on every replay/redelivery. Backs the hub DeliveryHook
+	// (todo 13); todo 23 extends delivery confirmation into the receipt state
+	// machine.
+	MarkDelivered(ctx context.Context, messageID int64, at time.Time) error
+
+	// MaxID returns the highest message id for a recipient, or 0 if the
+	// recipient has no messages. It is the high-water mark the hub reports in
+	// the WS/SSE "open" frame (todo 13).
+	MaxID(ctx context.Context, recipientUserID int64) (int64, error)
 }
 
 // AttachmentRepo covers the 1:1 send attachment.
@@ -228,6 +252,12 @@ type AttachmentRepo interface {
 type ReceiptRepo interface {
 	Create(ctx context.Context, r *Receipt) error
 	GetByID(ctx context.Context, id string) (Receipt, error)
+
+	// MarkLastDelivered records the first delivery time on a receipt's
+	// last_delivered_at, only while it is still NULL. The full
+	// pending->delivered state transition is owned by todo 23; this method
+	// is the narrow write the hub's default DeliveryHook needs (todo 13).
+	MarkLastDelivered(ctx context.Context, receiptID string, at time.Time) error
 }
 
 // QuotaRepo covers the monthly send counter.

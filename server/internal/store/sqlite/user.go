@@ -15,6 +15,12 @@ func (u *UserRepo) Create(ctx context.Context, in *store.User) (int64, error) {
 	return createUser(ctx, u.db, in)
 }
 
+// CreateBootstrap inserts a user, becoming admin iff it is the first row. The
+// role is decided by a CASE over a count(*) subquery inside the INSERT, which
+// SQLite executes as one atomic statement under the write lock; concurrent
+// first-time registrations serialize at the writer boundary so only one sees
+// a zero count and becomes admin.
+
 func createUser(ctx context.Context, q queryExec, in *store.User) (int64, error) {
 	res, err := q.ExecContext(ctx, `
 INSERT INTO users(email, pass_hash, role, user_key, quiet_start, quiet_end, quiet_tz, created_at)
@@ -43,6 +49,43 @@ func (u *UserRepo) GetByEmail(ctx context.Context, email string) (store.User, er
 
 func (u *UserRepo) GetByUserKey(ctx context.Context, key string) (store.User, error) {
 	return getUser(ctx, u.db, `SELECT `+userCols+` FROM users WHERE user_key = ?`, key)
+}
+
+func (u *UserRepo) CreateBootstrap(ctx context.Context, in *store.User) (int64, error) {
+	res, err := u.db.ExecContext(ctx, `
+INSERT INTO users(email, pass_hash, role, user_key, quiet_start, quiet_end, quiet_tz, created_at)
+SELECT ?, ?,
+       CASE WHEN (SELECT count(*) FROM users) = 0 THEN 'admin' ELSE 'user' END,
+       ?, ?, ?, ?, ?`,
+		in.Email, in.PassHash, in.UserKey,
+		optStr(in.QuietStart), optStr(in.QuietEnd), defaultIfEmpty(in.QuietTZ, "UTC"),
+		rfc3339(in.CreatedAt))
+	if err != nil {
+		return 0, mapErr(err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return 0, fmt.Errorf("user last insert id: %w", err)
+	}
+	in.ID = id
+	// Reflect the DB-assigned role back to the caller (admin iff first row).
+	if got, err := u.GetByID(ctx, id); err == nil {
+		in.Role = got.Role
+	}
+	return id, nil
+}
+
+func (u *UserRepo) UpdateQuietHours(ctx context.Context, id int64, quietStart, quietEnd, tz string) error {
+	res, err := u.db.ExecContext(ctx,
+		`UPDATE users SET quiet_start = ?, quiet_end = ?, quiet_tz = ? WHERE id = ?`,
+		optStr(quietStart), optStr(quietEnd), defaultIfEmpty(tz, "UTC"), id)
+	if err != nil {
+		return mapErr(err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return store.ErrNotFound
+	}
+	return nil
 }
 
 // userCols is the canonical column list + scan order for a user row. Kept in

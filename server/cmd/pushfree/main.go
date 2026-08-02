@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"flag"
 	"fmt"
@@ -12,8 +13,10 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/pushfree/pushfree/internal/api"
 	"github.com/pushfree/pushfree/internal/config"
 	"github.com/pushfree/pushfree/internal/server"
+	"github.com/pushfree/pushfree/internal/store/sqlite"
 )
 
 func main() {
@@ -44,7 +47,27 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	st, err := sqlite.Open(ctx, cfg.DBFile)
+	if err != nil {
+		return fmt.Errorf("open database: %w", err)
+	}
+	defer func() { _ = st.Close() }()
+
+	// Stateful sessions need a stable signing secret; a config secret persists
+	// across restarts. With none set, a random one is generated per process and
+	// all outstanding sessions are invalidated on the next restart.
+	authSecret := []byte(cfg.AuthSecret)
+	if len(authSecret) == 0 {
+		gen := make([]byte, 32)
+		if _, err := rand.Read(gen); err != nil {
+			return fmt.Errorf("generate auth secret: %w", err)
+		}
+		authSecret = gen
+		logger.Warn("auth-secret is not configured; generated a random session secret that will not survive restarts. Set \"auth-secret\" in the config or PUSHFREE_AUTH_SECRET to persist sessions")
+	}
+
 	srv := server.New(cfg, logger)
+	api.New(st.Repos(), authSecret, 0, logger).Register(srv.Mux())
 	logger.Info("starting pushfree server", "listen-addr", cfg.ListenAddr, "tls", cfg.TLSCertFile != "")
 	err = srv.Run(ctx)
 	if errors.Is(err, http.ErrServerClosed) {

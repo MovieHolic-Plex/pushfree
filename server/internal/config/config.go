@@ -35,6 +35,7 @@ type Config struct {
 	QuotaMonthly         int      `toml:"quota-monthly"`
 	MessagesRetention    string   `toml:"messages-retention"`
 	CallbackAllowedHosts []string `toml:"callback-allowed-hosts"`
+	AuthSecret           string   `toml:"auth-secret"`
 }
 
 // defaults returns a Config populated with the documented default values.
@@ -136,6 +137,9 @@ func applyEnv(cfg *Config, env LookupEnv) error {
 			}
 		}
 		cfg.CallbackAllowedHosts = hosts
+	}
+	if v, ok := env("PUSHFREE_AUTH_SECRET"); ok {
+		cfg.AuthSecret = v
 	}
 	return nil
 }

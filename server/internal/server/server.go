@@ -21,20 +21,27 @@ import (
 type Server struct {
 	cfg    *config.Config
 	logger *slog.Logger
+	mux    *http.ServeMux
 	http.Handler
 	srv *http.Server
 }
 
 // New builds a Server with the /health route registered. All other paths 404.
+// Additional route groups (e.g. the accounts API) register on Mux().
 func New(cfg *config.Config, logger *slog.Logger) *Server {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", health)
 	return &Server{
 		cfg:     cfg,
 		logger:  logger,
+		mux:     mux,
 		Handler: mux,
 	}
 }
+
+// Mux returns the root ServeMux so callers can register additional route
+// groups after construction without disturbing /health.
+func (s *Server) Mux() *http.ServeMux { return s.mux }
 
 // health reports liness. The body is exactly {"status":"ok"} with no trailing
 // newline so callers can assert byte-for-byte equality.
