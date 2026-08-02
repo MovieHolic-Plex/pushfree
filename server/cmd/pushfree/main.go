@@ -68,6 +68,7 @@ func run() error {
 
 	srv := server.New(cfg, logger)
 	api.New(st.Repos(), authSecret, 0, logger).Register(srv.Mux())
+	srv.MountRealtime(st.Repos(), authSecret)
 	logger.Info("starting pushfree server", "listen-addr", cfg.ListenAddr, "tls", cfg.TLSCertFile != "")
 	err = srv.Run(ctx)
 	if errors.Is(err, http.ErrServerClosed) {

@@ -12,7 +12,11 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/pushfree/pushfree/internal/api"
 	"github.com/pushfree/pushfree/internal/config"
+	"github.com/pushfree/pushfree/internal/hub"
+	"github.com/pushfree/pushfree/internal/store"
+	"github.com/pushfree/pushfree/internal/up"
 	"github.com/pushfree/pushfree/internal/webmount"
 )
 
@@ -25,6 +29,7 @@ type Server struct {
 	mux    *http.ServeMux
 	http.Handler
 	srv *http.Server
+	hub *hub.Hub // nil until MountRealtime; closed on graceful shutdown
 }
 
 // New builds a Server with the dependency-free routes registered: the
@@ -48,6 +53,40 @@ func New(cfg *config.Config, logger *slog.Logger) *Server {
 // Mux returns the root ServeMux so callers can register additional route
 // groups after construction without disturbing /health.
 func (s *Server) Mux() *http.ServeMux { return s.mux }
+
+// MountRealtime wires the Open Client transports and the UnifiedPush
+// distributor into the root mux. It builds the REAL session resolver
+// (api.SessionResolver, the signed-cookie implementation from security.go) so
+// device registration under /1/devices/login.json and /up/{sub}/subscribe.json
+// share one session identity. The hub owns the four /1/* Open Client routes;
+// the UP handler owns the three /up/{sub}/* distributor routes. Keepalive is
+// parsed from the configured string (defaulting to 45s on a malformed value).
+// The hub is retained so Run can close it during graceful shutdown.
+func (s *Server) MountRealtime(repos store.Repos, authSecret []byte) {
+	resolver := api.NewSessionResolver(authSecret)
+	h := hub.New(repos, resolver, hub.Options{
+		KeepaliveInterval: parseKeepalive(s.cfg.KeepaliveInterval),
+		Logger:            s.logger,
+	})
+	s.hub = h
+	mux := s.mux
+	mux.HandleFunc("POST /1/devices/login.json", h.ServeDeviceLogin)
+	mux.HandleFunc("GET /1/messages.json", h.GetMessagesHandler)
+	mux.HandleFunc("GET /1/ws", h.ServeWS)
+	mux.HandleFunc("GET /1/sse", h.ServeSSE)
+	up.New(repos, resolver, authSecret, up.Options{Logger: s.logger}).Register(mux)
+}
+
+// parseKeepalive resolves the configured keepalive duration, defaulting to
+// the documented 45s on a missing/malformed value so a bad config string can
+// never disable keepalives (which would silently drop idle clients behind
+// proxies).
+func parseKeepalive(s string) time.Duration {
+	if d, err := time.ParseDuration(s); err == nil && d > 0 {
+		return d
+	}
+	return 45 * time.Second
+}
 
 // health reports liness. The body is exactly {"status":"ok"} with no trailing
 // newline so callers can assert byte-for-byte equality.
@@ -91,6 +130,9 @@ func (s *Server) Run(ctx context.Context) error {
 		}
 		return nil
 	case <-ctx.Done():
+		if s.hub != nil {
+			s.hub.Close() // signal live WS/SSE loops to wind down
+		}
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		return s.srv.Shutdown(shutdownCtx)
