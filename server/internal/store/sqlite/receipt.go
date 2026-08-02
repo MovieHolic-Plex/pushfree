@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"time"
 
 	"github.com/pushfree/pushfree/internal/store"
 )
@@ -33,6 +34,18 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 func (r *ReceiptRepo) GetByID(ctx context.Context, id string) (store.Receipt, error) {
 	row := r.db.QueryRowContext(ctx, `SELECT `+receiptCols+` FROM receipts WHERE id = ?`, id)
 	return scanReceipt(row)
+}
+
+// MarkLastDelivered sets last_delivered_at on a receipt while it is still
+// NULL (first delivery only). The full pending->delivered state transition
+// is owned by todo 23; this is the narrow write the hub DeliveryHook needs.
+func (r *ReceiptRepo) MarkLastDelivered(ctx context.Context, receiptID string, at time.Time) error {
+	if _, err := r.db.ExecContext(ctx,
+		`UPDATE receipts SET last_delivered_at = ? WHERE id = ? AND last_delivered_at IS NULL`,
+		rfc3339(at), receiptID); err != nil {
+		return mapErr(err)
+	}
+	return nil
 }
 
 // receiptCols is the canonical receipt column list + scan order.

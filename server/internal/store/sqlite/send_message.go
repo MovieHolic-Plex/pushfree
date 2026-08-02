@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"time"
 
 	"github.com/pushfree/pushfree/internal/store"
 )
@@ -182,4 +183,32 @@ LIMIT ?`, recipientUserID, afterID, limit)
 		out = append(out, msg)
 	}
 	return out, mapErr(rows.Err())
+}
+
+// MarkDelivered records the first transport-accepted delivery time on a
+// message row. The `delivered_at IS NULL` guard makes it idempotent across
+// replay/redelivery: only the first accepted write sets the timestamp.
+func (m *MessageRepo) MarkDelivered(ctx context.Context, messageID int64, at time.Time) error {
+	if _, err := m.db.ExecContext(ctx,
+		`UPDATE messages SET delivered_at = ? WHERE id = ? AND delivered_at IS NULL`,
+		rfc3339(at), messageID); err != nil {
+		return mapErr(err)
+	}
+	return nil
+}
+
+// MaxID returns the highest message id for a recipient, or 0 if the recipient
+// has no messages. MAX returns NULL over an empty set, scanned into NullInt64.
+func (m *MessageRepo) MaxID(ctx context.Context, recipientUserID int64) (int64, error) {
+	var id sql.NullInt64
+	err := m.db.QueryRowContext(ctx,
+		`SELECT MAX(id) FROM messages WHERE recipient_user_id = ?`,
+		recipientUserID).Scan(&id)
+	if err != nil {
+		return 0, mapErr(err)
+	}
+	if !id.Valid {
+		return 0, nil
+	}
+	return id.Int64, nil
 }
