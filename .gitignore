@@ -1,0 +1,44 @@
+# PushFree root .gitignore
+
+# --- Orchestration state (never commit) ---
+.omo/
+
+# --- Go ---
+*.exe
+*.exe~
+*.test
+*.out
+/bin/
+/dist/
+
+# --- Rust ---
+target/
+**/*.rs.bk
+
+# --- Android ---
+.gradle/
+build/
+local.properties
+*.keystore
+*.jks
+keystore.properties
+*.apk
+*.aab
+
+# --- Node ---
+node_modules/
+.next/
+out/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# --- Editor / OS junk ---
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
