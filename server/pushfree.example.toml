@@ -1,0 +1,46 @@
+# pushfree example configuration.
+#
+# Copy to pushfree.toml and edit. Every key is optional; the values shown here
+# are the built-in defaults, so an empty file is a valid configuration.
+#
+# Environment variables PUSHFREE_* override file values (env wins). Replace
+# dashes with underscores, e.g. listen-addr -> PUSHFREE_LISTEN_ADDR.
+
+# Config schema version. Must match the binary's expected version, otherwise
+# startup is refused. Bump only when the schema changes in a breaking way.
+version = 1
+
+# Address the HTTP(S) server listens on.
+listen-addr = ":2586"
+
+# Built-in TLS. Set BOTH to serve HTTPS directly. Leave BOTH empty to serve
+# plain HTTP behind a reverse proxy (recommended for self-hosting). Setting
+# only one is a startup error.
+tls-cert-file = ""
+tls-key-file = ""
+
+# Public base URL clients use to reach this server, e.g.
+# "https://push.example.com". Used later for absolute callback/redirect URLs.
+base-url = ""
+
+# SQLite database file (pure-Go driver, no cgo). db-url is reserved for a
+# future Postgres backend and is currently unused.
+db-file = "pushfree.db"
+db-url = ""
+
+# Optional path to an FCM v1 service-account JSON. Omit to keep the FCM
+# delivery channel disabled; the server still starts cleanly.
+fcm-credentials-file = ""
+
+# WebSocket/SSE keepalive interval.
+keepalive-interval = "45s"
+
+# Per-user monthly message quota (count of sends, not delivery attempts).
+quota-monthly = 10000
+
+# How long delivered messages are retained before the sweeper deletes them.
+messages-retention = "720h"
+
+# Hosts permitted as receipt callback targets. Private/loopback addresses stay
+# blocked by default; list public hosts you trust here.
+callback-allowed-hosts = []
