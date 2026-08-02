@@ -82,7 +82,7 @@ type Send struct {
 	ID           int64
 	AppID        int64
 	SenderUserID int64
-	Priority     int   // [-2, 2]
+	Priority     int // [-2, 2]
 	Sound        string
 	Title        string
 	Body         string
@@ -90,8 +90,8 @@ type Send struct {
 	URLTitle     string
 	HTML         bool
 	Monospace    bool
-	Timestamp    int64 // unix seconds, sender-supplied
-	TTL          int64 // seconds
+	Timestamp    int64  // unix seconds, sender-supplied
+	TTL          int64  // seconds
 	Tag          string // "" if NULL
 	Encrypted    bool
 	CallbackURL  string // "" if NULL
@@ -217,13 +217,6 @@ type AppRepo interface {
 type DeviceRepo interface {
 	Create(ctx context.Context, d *Device) (int64, error)
 	GetByDeviceID(ctx context.Context, deviceID string) (Device, error)
-
-	// ClearFCMToken nulls the fcm_token of the device with the given
-	// device_id. Called by the FCM delivery channel (todo 16) when FCM
-	// reports the token as UNREGISTERED or INVALID_ARGUMENT, so the device
-	// must re-register before it can receive FCM again. It is not an error
-	// if the device has no token or does not exist (idempotent clear).
-	ClearFCMToken(ctx context.Context, deviceID string) error
 }
 
 // Fanout is the atomic unit of an API ingest: one send row, N per-recipient
@@ -236,10 +229,34 @@ type Fanout struct {
 	Receipt  *Receipt // nil to skip
 }
 
+// IngestInput is the full atomic write for one POST /1/messages.json call
+// (todo 8): the parent send, its per-recipient fan-out messages, an optional
+// priority-2 receipt placeholder, and an optional attachment. All non-nil
+// parts are committed in one transaction by IngestRepo.Ingest. It mirrors
+// Fanout but adds the attachment (the messages.json handler persists the
+// attachment atomically with the send).
+type IngestInput struct {
+	Send       Send
+	Messages   []Message
+	Receipt    *Receipt    // nil unless priority == 2
+	Attachment *Attachment // nil if no attachment
+}
+
 // SendRepo covers the ingest path. CreateFanout is the only multi-table write.
 type SendRepo interface {
 	CreateFanout(ctx context.Context, f *Fanout) (sendID int64, err error)
 	GetByID(ctx context.Context, id int64) (Send, error)
+}
+
+// IngestRepo performs the atomic write for one POST /1/messages.json call
+// (todo 8): one send, per-recipient messages, an optional priority-2 receipt,
+// and an optional attachment, all committed together. It is distinct from
+// SendRepo.CreateFanout because the messages.json ingest path also persists
+// the attachment atomically; the concrete implementation lives in
+// internal/store/sqlite/ingest.go so it never edits the worker-owned
+// send_message.go/receipt.go files.
+type IngestRepo interface {
+	Ingest(ctx context.Context, in *IngestInput) (sendID int64, err error)
 }
 
 // MessageRepo covers per-recipient delivery queries.
@@ -303,14 +320,15 @@ type CallbackRepo interface {
 // Repos bundles every repository interface. Concrete implementations
 // (sqlite, later postgres) produce one of these.
 type Repos struct {
-	Users      UserRepo
-	Apps       AppRepo
-	Devices    DeviceRepo
-	Sends      SendRepo
-	Messages   MessageRepo
+	Users       UserRepo
+	Apps        AppRepo
+	Devices     DeviceRepo
+	Sends       SendRepo
+	Messages    MessageRepo
 	Attachments AttachmentRepo
-	Receipts   ReceiptRepo
-	Quota      QuotaRepo
-	Timers     TimerRepo
-	Callbacks  CallbackRepo
+	Receipts    ReceiptRepo
+	Quota       QuotaRepo
+	Timers      TimerRepo
+	Callbacks   CallbackRepo
+	Ingests     IngestRepo
 }

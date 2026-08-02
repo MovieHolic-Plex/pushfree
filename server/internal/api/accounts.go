@@ -53,6 +53,12 @@ func (a *Accounts) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/apps", a.requireSession(a.createApp))
 	mux.HandleFunc("GET /v1/apps", a.requireSession(a.listApps))
 	mux.HandleFunc("DELETE /v1/apps/{token}", a.requireSession(a.deleteApp))
+
+	// Pushover-compatible send path. limitWrap attaches X-Limit-App-* headers
+	// from the resolved caller; messagesHandler re-resolves the caller from
+	// the form-body token and calls SetLimitHeaders again so remaining
+	// reflects the just-accepted send.
+	mux.HandleFunc("POST /1/messages.json", a.limitWrap(a.messagesHandler))
 }
 
 // --- JSON helpers -----------------------------------------------------------

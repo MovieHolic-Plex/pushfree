@@ -101,6 +101,7 @@ type Store struct {
 	quota *QuotaRepo
 	timrs *TimerRepo
 	cbs   *CallbackRepo
+	ing   *IngestRepo
 }
 
 // Open opens (and migrates) the database and returns a fully wired Store.
@@ -127,6 +128,7 @@ func NewStore(db *sql.DB) *Store {
 		quota: &QuotaRepo{db: db},
 		timrs: &TimerRepo{db: db},
 		cbs:   &CallbackRepo{db: db},
+		ing:   &IngestRepo{db: db},
 	}
 }
 
@@ -149,6 +151,7 @@ func (s *Store) Repos() store.Repos {
 		Quota:       s.quota,
 		Timers:      s.timrs,
 		Callbacks:   s.cbs,
+		Ingests:     s.ing,
 	}
 }
 
@@ -186,4 +189,3 @@ func containsAny(s string, subs ...string) bool {
 	}
 	return false
 }
-
