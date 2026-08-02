@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<data-extraction-rules>
+    <cloud-backup>
+        <!-- No persistent user secrets in the scaffold yet. -->
+    </cloud-backup>
+    <device-transfer>
+        <!-- No persistent user secrets in the scaffold yet. -->
+    </device-transfer>
+</data-extraction-rules>
