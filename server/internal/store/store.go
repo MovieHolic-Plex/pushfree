@@ -201,6 +201,16 @@ type AppRepo interface {
 	Create(ctx context.Context, a *App) (int64, error)
 	GetByID(ctx context.Context, id int64) (App, error)
 	GetByToken(ctx context.Context, token string) (App, error)
+	// ListByUser returns every app owned by userID, ordered by id ascending
+	// (creation order). Used by GET /1/apps to surface token values to the
+	// owner (todo 7).
+	ListByUser(ctx context.Context, userID int64) ([]App, error)
+	// DeleteByToken deletes the app with the given token iff it belongs to
+	// userID. It returns ErrNotFound if no such (user, token) row exists, so
+	// a cross-user revoke attempt is indistinguishable from a missing token
+	// (no enumeration). Used by DELETE /1/apps/{token} (todo 7) and is the
+	// revoke that makes a token fail ValidateAppToken on the send path.
+	DeleteByToken(ctx context.Context, userID int64, token string) error
 }
 
 // DeviceRepo covers client registration.

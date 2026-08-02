@@ -12,7 +12,11 @@ import (
 )
 
 // Accounts is the account-management HTTP handler group. It is wired onto an
-// existing ServeMux via Register; it owns no listener.
+// existing ServeMux via Register; it owns no listener. In addition to the
+// /v1/accounts surface it mounts the session-authenticated app-token
+// management routes under /v1/apps. It also owns the X-Limit-App-* header
+// helpers (applimit.go) that todo 8's /1/* send path attaches to its
+// responses, and the app-token validation helper the send path uses for auth.
 type Accounts struct {
 	repos      store.Repos
 	authSecret []byte
@@ -34,12 +38,21 @@ func New(repos store.Repos, authSecret []byte, ttl time.Duration, logger *slog.L
 }
 
 // Register mounts the account routes on mux. /health and other groups are left
-// untouched.
+// untouched. It also mounts the session-authenticated app-token management
+// routes under /v1/apps, matching the /v1/accounts convention. The
+// X-Limit-App-* response headers are NOT applied here: they belong on the
+// /1/* send path (todo 8 messages.json), which attaches them via
+// SetLimitHeaders / limitWrap from applimit.go.
 func (a *Accounts) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/accounts", a.register)
 	mux.HandleFunc("POST /v1/accounts/login", a.login)
 	mux.HandleFunc("GET /v1/accounts/me", a.requireSession(a.me))
 	mux.HandleFunc("PUT /v1/accounts/quiet-hours", a.requireSession(a.quietHours))
+
+	// App-token management (session-auth), same pattern as /v1/accounts*.
+	mux.HandleFunc("POST /v1/apps", a.requireSession(a.createApp))
+	mux.HandleFunc("GET /v1/apps", a.requireSession(a.listApps))
+	mux.HandleFunc("DELETE /v1/apps/{token}", a.requireSession(a.deleteApp))
 }
 
 // --- JSON helpers -----------------------------------------------------------

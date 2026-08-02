@@ -44,6 +44,12 @@ var (
 // bias against the 62-symbol alphabet.
 const keyAlphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
 
+// newAppToken returns a 30-char [A-Za-z0-9] app token from crypto/rand. It
+// shares the alphabet, length, and unbiased rejection-sampled generator with
+// user_key; the two identifier kinds are format-identical by spec
+// (apps.token has the same CHECK(length(token)=30) constraint).
+func newAppToken() (string, error) { return newUserKey() }
+
 // newUserKey returns a 30-char [A-Za-z0-9] identifier sourced from crypto/rand
 // with rejection sampling so the distribution is unbiased.
 func newUserKey() (string, error) {

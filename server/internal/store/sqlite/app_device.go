@@ -42,6 +42,43 @@ func getApp(ctx context.Context, q queryExec, query string, args ...any) (store.
 	return a, nil
 }
 
+// ListByUser returns every app for userID in ascending id (creation) order.
+func (a *AppRepo) ListByUser(ctx context.Context, userID int64) ([]store.App, error) {
+	rows, err := a.db.QueryContext(ctx,
+		`SELECT id, user_id, token, name FROM apps WHERE user_id = ? ORDER BY id ASC`, userID)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	defer rows.Close()
+	apps := make([]store.App, 0)
+	for rows.Next() {
+		var ap store.App
+		if err := rows.Scan(&ap.ID, &ap.UserID, &ap.Token, &ap.Name); err != nil {
+			return nil, mapErr(err)
+		}
+		apps = append(apps, ap)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, mapErr(err)
+	}
+	return apps, nil
+}
+
+// DeleteByToken deletes the app iff it is owned by userID. Returns
+// store.ErrNotFound when no matching row exists (including cross-user
+// attempts), so revoke cannot be used to enumerate other users' tokens.
+func (a *AppRepo) DeleteByToken(ctx context.Context, userID int64, token string) error {
+	res, err := a.db.ExecContext(ctx,
+		`DELETE FROM apps WHERE user_id = ? AND token = ?`, userID, token)
+	if err != nil {
+		return mapErr(err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
 // DeviceRepo is the SQLite implementation of store.DeviceRepo.
 type DeviceRepo struct{ db DB }
 
