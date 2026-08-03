@@ -47,7 +47,7 @@ export default function LoginPage() {
   }
 
   return (
-    <main>
+    <main className="auth">
       <h1>pushfree</h1>
       <h2>Sign in</h2>
       <form onSubmit={onSubmit}>
