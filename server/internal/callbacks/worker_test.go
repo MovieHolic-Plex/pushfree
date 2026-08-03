@@ -17,7 +17,7 @@
 //  3. 60s retry under an injected clock. A non-2xx response schedules the next
 //     attempt exactly RetryInterval (60s) later; advancing the injected clock
 //     and re-running ProcessDue drives the next attempt. Recovery (500 then
-//     200) succeeds on the second attempt and records receipt.called_back_at.
+//  200. succeeds on the second attempt and records receipt.called_back_at.
 //  4. Indefinite retry + DLQ observability. A permanently-failing URL is
 //     retried at 60s intervals without bound; each failed attempt appends a dlq
 //     row (observability, never an abort).
@@ -90,10 +90,10 @@ type fakeDLQ struct {
 // CallbackWorkerRepo so the worker logic is exercised without a database.
 // Guarded by a mutex because ProcessDue dispatches attempts concurrently.
 type fakeStore struct {
-	mu        sync.Mutex
-	targets   map[string]callbacks.Target
-	cbs       []fakeCB
-	dlq       []fakeDLQ
+	mu         sync.Mutex
+	targets    map[string]callbacks.Target
+	cbs        []fakeCB
+	dlq        []fakeDLQ
 	calledBack map[string]time.Time
 	nextID     int64
 }
@@ -328,8 +328,8 @@ func TestValidateURL(t *testing.T) {
 		"http://192.168.1.1/admin",
 		"http://[::1]/",
 		"http://[fd00::1]/",
-		"http://internal.example.com/",          // resolves to 10.1.2.3
-		"http://rebind.example.com/",            // resolves to a blocked IP (rebinding)
+		"http://internal.example.com/", // resolves to 10.1.2.3
+		"http://rebind.example.com/",   // resolves to a blocked IP (rebinding)
 	}
 	for _, u := range blocked {
 		if err := callbacks.ValidateURL(ctx, u, nil, resolve); !errors.Is(err, callbacks.ErrSSRFBlocked) {
@@ -338,8 +338,8 @@ func TestValidateURL(t *testing.T) {
 	}
 
 	allowed := []string{
-		"http://example.com/",            // resolves to public IP
-		"https://example.com:443/hook",   // https + port
+		"http://example.com/",          // resolves to public IP
+		"https://example.com:443/hook", // https + port
 	}
 	for _, u := range allowed {
 		if err := callbacks.ValidateURL(ctx, u, nil, resolve); err != nil {
@@ -678,11 +678,11 @@ func TestCallbackPerHostConcurrencyCap(t *testing.T) {
 	}
 
 	w := callbacks.NewWorker(fs, callbacks.Options{
-		Clock:             clk.now,
-		AllowedHosts:      allowedHostsOf(srv),
-		HostConcurrency:   cap,
-		DueLimit:          n,
-		RetryInterval:     60 * time.Second,
+		Clock:           clk.now,
+		AllowedHosts:    allowedHostsOf(srv),
+		HostConcurrency: cap,
+		DueLimit:        n,
+		RetryInterval:   60 * time.Second,
 	})
 	if w == nil {
 		t.Fatalf("NewWorker returned nil")

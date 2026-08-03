@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/pushfree/pushfree/internal/api"
+	"github.com/pushfree/pushfree/internal/callbacks"
 	"github.com/pushfree/pushfree/internal/config"
 	"github.com/pushfree/pushfree/internal/retention"
 	"github.com/pushfree/pushfree/internal/server"
@@ -96,7 +97,25 @@ func run() error {
 	}
 
 	srv := server.New(cfg, logger)
-	api.New(st.Repos(), authSecret, 0, logger).Register(srv.Mux())
+
+	// Callback worker (todo 25): SSRF-guarded webhook delivery with a 60s
+	// retry on non-2xx. Built before Accounts so the ack-hook seam is
+	// installed before routes are registered. The default denylist (loopback,
+	// link-local, RFC1918, ULA) is fully enforced; only configured
+	// callback-allowed-hosts bypass it.
+	callbackWorker := callbacks.NewWorker(sqlite.NewCallbackWorkerRepo(st.DB()), callbacks.Options{
+		AllowedHosts: cfg.CallbackAllowedHosts,
+		Logger:       logger,
+	})
+	callbackDone := make(chan struct{})
+	go func() {
+		defer close(callbackDone)
+		_ = callbackWorker.Run(ctx)
+	}()
+
+	accounts := api.New(st.Repos(), authSecret, 0, logger)
+	accounts.SetAckHook(callbackWorker)
+	accounts.Register(srv.Mux())
 	// Cancel + cancel_by_tag endpoints (todo 24). Registered as a standalone
 	// group on the same mux; the CancelStore is the SQLite CancelRepo over the
 	// shared DB. The live cancel broadcaster is nil here -- the hub-side
@@ -112,6 +131,7 @@ func run() error {
 	// and wait for it to stop touching the database before the checkpoint.
 	stop()
 	<-sweeperDone
+	<-callbackDone
 
 	// WAL checkpoint as the shutdown tail: bounded by shutdown-timeout so the
 	// whole stop stays inside the 10s budget on an idle server. The logged
