@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pushfree/pushfree/internal/quota"
 	"github.com/pushfree/pushfree/internal/store"
 	"github.com/pushfree/pushfree/internal/store/sqlite"
 )
@@ -102,7 +103,8 @@ func createApp(t *testing.T, c *http.Client, baseURL, name string) string {
 
 // assertLimitHeaders validates the three X-Limit-App-* headers a /1/* send
 // response carries: fixed limit, remaining consistent with the counter, reset
-// at the next UTC calendar-month boundary.
+// at the next America/Chicago calendar-month boundary (todo 10: Central-Time
+// reset, DST-aware -- NOT 00:00 UTC).
 func assertLimitHeaders(t *testing.T, hdr http.Header, wantRemaining int) {
 	t.Helper()
 	if got := hdr.Get("X-Limit-App-Limit"); got != "10000" {
@@ -115,9 +117,11 @@ func assertLimitHeaders(t *testing.T, hdr http.Header, wantRemaining int) {
 	if err != nil {
 		t.Fatalf("X-Limit-App-Reset not int: %q", hdr.Get("X-Limit-App-Reset"))
 	}
-	rt := time.Unix(reset, 0).UTC()
+	// The reset epoch must land on the first instant of a month in Central
+	// Time (00:00:00 America/Chicago), DST-aware -- not 00:00 UTC.
+	rt := time.Unix(reset, 0).In(quota.CentralTime)
 	if rt.Day() != 1 || rt.Hour() != 0 || rt.Minute() != 0 || rt.Second() != 0 {
-		t.Fatalf("reset %v is not a month boundary (1st 00:00:00 UTC)", rt)
+		t.Fatalf("reset %v is not a month boundary (1st 00:00:00 America/Chicago)", rt)
 	}
 	now := time.Now().UTC()
 	if !rt.After(now) {

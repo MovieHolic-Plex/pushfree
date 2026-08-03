@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"strconv"
 	"time"
+
+	"github.com/pushfree/pushfree/internal/quota"
 )
 
 // monthlyLimit is the per-user send quota surfaced verbatim in
@@ -22,31 +24,32 @@ const monthlyLimit = 10000
 // WriteInvalidAppToken.
 var ErrInvalidAppToken = errors.New("api: application token is invalid")
 
-// --- SEAM for todo 10 (monthly quota) --------------------------------------
-// todo 10 will:
-//  1. switch the period/reset window from UTC to America/Chicago (Central
-//     Time) -- quotaPeriod + nextMonthReset below are the ONLY edits needed
-//     in this file;
-//  2. add GET /1/apps/limits.json and 429 enforcement on overflow.
+// --- Monthly quota reset zone (todo 10) ------------------------------------
+// The period/reset window is America/Chicago (Central Time): the quota resets
+// at 00:00:00 CT on the 1st of each month, DST-aware. The pure time math lives
+// in internal/quota (Period/NextReset over an injected *time.Location) so it
+// is unit-tested at the month boundary with a fixed clock; these wrappers keep
+// the existing applimit.go callers on the same Central-Time zone.
 //
-// The counter already lives in quota_counters via store.QuotaRepo, so todo 10
-// reads/writes the same rows this file does. The decrement-on-send is wired
-// by todo 8 through MarkSendAccepted; until then the counter stays at 0 and
-// remaining reads as the full limit, which is the correct pre-ingest state.
+// The counter lives in quota_counters via store.QuotaRepo; todo 8 charges it
+// post-ingest (MarkSendAccepted / the messages.json Increment), and todo 10
+// adds the pre-write 429 gate (internal/api/quota.go + messages.go) and the
+// GET /1/apps/limits.json endpoint. Delivery retries never re-count (the
+// regression note stays in todo 26).
 
-// quotaPeriod returns the "YYYY-MM" period containing now. UTC for now; todo
-// 10 switches this to America/Chicago.
+// quotaPeriod returns the "YYYY-MM" billing period containing now, evaluated
+// in America/Chicago (Central Time). DST-safe: the month is computed in the
+// CT zone, not in UTC.
 func quotaPeriod(now time.Time) string {
-	return now.UTC().Format("2006-01")
+	return quota.Period(quota.CentralTime, now)
 }
 
-// nextMonthReset returns the epoch-second timestamp of the next UTC
-// calendar-month boundary (the first instant of the following month). It is
-// the value reported in X-Limit-App-Reset. todo 10 switches this to
-// America/Chicago.
+// nextMonthReset returns the epoch-second timestamp of the next America/Chicago
+// calendar-month boundary (the first instant 00:00:00 CT of the following
+// month). It is the value reported in X-Limit-App-Reset and limits.json's
+// "reset". During CDT (summer) that is 05:00 UTC; during CST (winter) 06:00 UTC.
 func nextMonthReset(now time.Time) int64 {
-	u := now.UTC()
-	return time.Date(u.Year(), u.Month()+1, 1, 0, 0, 0, 0, time.UTC).Unix()
+	return quota.NextReset(quota.CentralTime, now)
 }
 
 // quotaSnapshot returns (limit, remaining, resetEpochSeconds) for userID in

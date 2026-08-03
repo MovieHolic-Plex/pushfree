@@ -246,6 +246,24 @@ func (a *Accounts) messagesHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// --- Pre-write quota gate (todo 10) -----------------------------------
+	// Reject BEFORE persisting if this send would push the sender over the
+	// monthly limit. The gate charges per concrete recipient
+	// (len(recipientIDs)), consistent with the post-ingest Increment below --
+	// a group send with N members costs N. Fails CLOSED on a store error so a
+	// transient outage cannot let quota escape. The 429 carries
+	// X-Limit-App-Remaining:0 (SetLimitHeaders reads the live counter, which
+	// is at/over the limit at this point). Delivery retries never reach this
+	// gate (receipts READ-only path, todo 26 regression note).
+	if n := int64(len(recipientIDs)); n > 0 {
+		if allowed, _ := a.prechargeQuota(r.Context(), senderUserID, n); !allowed {
+			a.SetLimitHeaders(w, senderUserID)
+			writeRequestErrors(w, http.StatusTooManyRequests, requestID,
+				"application reached monthly message limit")
+			return
+		}
+	}
+
 	// --- Assemble the send row ---------------------------------------------
 	// sound: unknown/custom values are ACCEPT-AND-STORE. Pushover falls back
 	// to its default sound for user-uploaded/unknown sounds, so we do NOT

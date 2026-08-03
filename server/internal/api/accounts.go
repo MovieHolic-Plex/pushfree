@@ -68,6 +68,11 @@ func (a *Accounts) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /1/users/validate.json", a.limitWrap(a.validateHandler))
 	mux.HandleFunc("GET /1/sounds.json", a.limitWrap(a.soundsHandler))
 
+	// Monthly quota usage endpoint (todo 10). Read-only, app-token auth via
+	// the ?token= query; returns {count,limit,remaining,reset} for the token
+	// owner. limitWrap also attaches the X-Limit-App-* headers.
+	mux.HandleFunc("GET /1/apps/limits.json", a.limitWrap(a.limitsHandler))
+
 	// Delivery-group management (session-auth, todo 9). A group_key is the
 	// same 30-char format as a user_key and can be used verbatim in the
 	// "user" field of /1/messages.json for fan-out to members.
@@ -75,6 +80,15 @@ func (a *Accounts) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /1/groups.json", a.requireSession(a.listGroups))
 	mux.HandleFunc("PUT /1/groups.json", a.requireSession(a.updateGroup))
 	mux.HandleFunc("DELETE /1/groups.json", a.requireSession(a.deleteGroup))
+
+	// Subscription codes with dynamic per-app keys (todo 12). Issue and
+	// migrate are token-authenticated (the app token is in the JSON body);
+	// authorize is session-authenticated (the subscriber approves via the
+	// dashboard, todo 41). A subscribed_user_key resolves like a user_key in
+	// the send path.
+	mux.HandleFunc("POST /1/subscriptions", a.createSubscription)
+	mux.HandleFunc("POST /1/subscriptions/authorize", a.requireSession(a.authorizeSubscription))
+	mux.HandleFunc("POST /1/subscriptions/migrate.json", a.migrateSubscription)
 }
 
 // --- JSON helpers -----------------------------------------------------------
