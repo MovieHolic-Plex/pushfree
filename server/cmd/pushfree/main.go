@@ -97,6 +97,12 @@ func run() error {
 
 	srv := server.New(cfg, logger)
 	api.New(st.Repos(), authSecret, 0, logger).Register(srv.Mux())
+	// Cancel + cancel_by_tag endpoints (todo 24). Registered as a standalone
+	// group on the same mux; the CancelStore is the SQLite CancelRepo over the
+	// shared DB. The live cancel broadcaster is nil here -- the hub-side
+	// BroadcastCancel is wired once live message push exists (todos 22/23);
+	// the persisted canceled state stops retries regardless.
+	api.NewCancelAPI(st.Repos(), sqlite.NewCancelRepo(st.DB()), nil, logger).Register(srv.Mux())
 	srv.MountRealtime(st.Repos(), authSecret)
 	logger.Info("starting pushfree server", "listen-addr", cfg.ListenAddr, "tls", cfg.TLSCertFile != "")
 	err = srv.Run(ctx)

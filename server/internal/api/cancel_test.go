@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -50,6 +51,11 @@ func newCancelEnv(t *testing.T) (*Accounts, *sqlite.Store, string) {
 	a := New(st.Repos(), []byte("cancel-test-secret"), 0, nil)
 	mux := http.NewServeMux()
 	a.Register(mux)
+	// Mount the cancel handler group (todo 24) on the same mux. Its
+	// CancelStore is the SQLite CancelRepo over the same DB; the broadcaster
+	// is nil here (the broadcast-seam subtest builds its own server with a
+	// fake).
+	NewCancelAPI(st.Repos(), sqlite.NewCancelRepo(st.DB()), nil, nil).Register(mux)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return a, st, srv.URL
@@ -308,4 +314,63 @@ func TestCancel(t *testing.T) {
 			t.Fatalf("status field=%v want 0: %s", body["status"], raw)
 		}
 	})
+
+	// --- successful cancel fires the broadcaster (hub wiring seam) --------
+	// The hub-side BroadcastCancel is deferred until live message push exists
+	// (todos 22/23); this asserts the handler invokes the seam with the
+	// canceled receipt id + tag, which is the whole wiring contract.
+	t.Run("cancel_notifies_broadcaster", func(t *testing.T) {
+		dbPath := filepath.Join(t.TempDir(), "pushfree-cancel-bc-test.db")
+		st, err := sqlite.Open(context.Background(), dbPath)
+		if err != nil {
+			t.Fatalf("sqlite.Open: %v", err)
+		}
+		t.Cleanup(func() { _ = st.Close() })
+		repos := st.Repos()
+		bc := &fakeCancelBroadcaster{}
+		mux := http.NewServeMux()
+		New(repos, []byte("cancel-bc-secret"), 0, nil).Register(mux)
+		NewCancelAPI(repos, sqlite.NewCancelRepo(st.DB()), bc, nil).Register(mux)
+		srv := httptest.NewServer(mux)
+		t.Cleanup(srv.Close)
+
+		c := newClient(t)
+		userKey := register(t, c, srv.URL, "bc@example.com", "password1")
+		login(t, c, srv.URL, "bc@example.com", "password1")
+		tok := createApp(t, c, srv.URL, "monitoring")
+		r := sendP2WithTag(t, c, srv.URL, tok, userKey, "alert")
+
+		status, _, body, raw := postCancel(t, c, srv.URL, r, tok)
+		if status != http.StatusOK || body["status"] != float64(1) {
+			t.Fatalf("cancel status=%d body=%s", status, raw)
+		}
+		if got := bc.pop(); got != r {
+			t.Fatalf("broadcaster notified with %q, want receipt %q", got, r)
+		}
+	})
+}
+
+// fakeCancelBroadcaster records the receipt ids it was told were canceled.
+// It is the test double for api.CancelBroadcaster (the hub wiring seam).
+type fakeCancelBroadcaster struct {
+	mu   sync.Mutex
+	seen []string
+}
+
+func (f *fakeCancelBroadcaster) NotifyCanceled(receiptID, tag string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.seen = append(f.seen, receiptID)
+}
+
+// pop returns the first notified receipt id (FIFO), or "" if none.
+func (f *fakeCancelBroadcaster) pop() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.seen) == 0 {
+		return ""
+	}
+	v := f.seen[0]
+	f.seen = f.seen[1:]
+	return v
 }
