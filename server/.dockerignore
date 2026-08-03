@@ -1,0 +1,26 @@
+# Build artifacts / host binaries — never needed inside the image, and the
+# Windows pushfree.exe alone is ~17 MB, so excluding it keeps the context small.
+pushfree
+pushfree.exe
+pushfree-*
+*.test
+*.out
+
+# Local dev databases and SQLite sidecar files.
+*.db
+*.db-wal
+*.db-shm
+
+# Editor / OS noise (server/ has no .git of its own; harmless if present).
+.git
+.gitignore
+.idea
+.vscode
+.DS_Store
+
+# These are not needed inside the image.
+Dockerfile
+.dockerignore
+
+# IMPORTANT: do NOT exclude internal/webmount/web/out — that directory holds the
+# committed embedded dashboard (go:embed), which `go build` requires.

@@ -1,0 +1,80 @@
+# pushfree self-hosted deployment.
+#
+# Quick start (from the repo root):
+#   docker build -t pushfree server/
+#   docker compose -f deploy/docker-compose.yml up -d
+#   curl -sf localhost:2586/health        # -> {"status":"ok"}
+#
+# Or build and run in one step (compose builds the image if absent):
+#   docker compose -f deploy/docker-compose.yml up -d --build
+#
+# The config file is bind-mounted read-only from deploy/pushfree.example.toml.
+# For a real deployment, copy it to pushfree.toml, edit it, and change the
+# volume below to mount pushfree.toml instead:
+#   cp deploy/pushfree.example.toml deploy/pushfree.toml
+#
+# Profiles:
+#   default            pushfree server with a local SQLite volume.
+#   postgres           add a Postgres instance (opt in): switch the server's
+#                      db-url to the Postgres DSN and run:
+#   docker compose -f deploy/docker-compose.yml --profile postgres up -d
+#                      (see docs/POSTGRES.md for backend switching)
+
+services:
+  pushfree:
+    # `image` is used if present; `build` builds it otherwise. The standalone
+    # `docker build -t pushfree server/` produces the same image.
+    image: pushfree:latest
+    build:
+      context: ../server
+      dockerfile: Dockerfile
+    container_name: pushfree
+    restart: unless-stopped
+    ports:
+      - "2586:2586"
+    volumes:
+      # Persistent SQLite database (writable by the nonroot image user; see
+      # Dockerfile for the ownership setup that avoids permission errors).
+      - pushfree-data:/var/lib/pushfree
+      # Server config, read-only. Edit deploy/pushfree.example.toml or copy to
+      # pushfree.toml and update this path.
+      - ./pushfree.example.toml:/etc/pushfree/pushfree.toml:ro
+    environment:
+      # PUSHFREE_* env always wins over the file. Set a stable secret so
+      # login sessions survive restarts; left empty, the server generates a
+      # random per-process secret (WARN logged, sessions reset on restart).
+      PUSHFREE_AUTH_SECRET: ${PUSHFREE_AUTH_SECRET:-}
+      # Point the server at Postgres instead of SQLite (requires the postgres
+      # profile). Leave empty to use the SQLite volume.
+      PUSHFREE_DB_URL: ${PUSHFREE_DB_URL:-}
+    healthcheck:
+      # Mirrors the image HEALTHCHECK. Uses the helper compiled into the
+      # distroless image (no shell/curl needed).
+      test: ["CMD", "/usr/local/bin/pf-healthcheck"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+  postgres:
+    # Optional backend. Not started unless --profile postgres is passed.
+    profiles: ["postgres"]
+    image: postgres:17-alpine
+    container_name: pushfree-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: pushfree
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pushfree}
+      POSTGRES_DB: pushfree
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      # postgres-alpine has /bin/sh, so CMD-SHELL is fine here.
+      test: ["CMD-SHELL", "pg_isready -U pushfree -d pushfree"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pushfree-data:
+  pg-data:

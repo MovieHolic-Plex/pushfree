@@ -1,0 +1,87 @@
+# pushfree example configuration (Docker).
+#
+# Bind-mounted read-only into the container at /etc/pushfree/pushfree.toml by
+# deploy/docker-compose.yml. Every key is optional; the values here are the
+# built-in defaults, so an empty file is valid.
+#
+# PUSHFREE_* environment variables override file values (env always wins).
+# Replace dashes with underscores, e.g. listen-addr -> PUSHFREE_LISTEN_ADDR.
+# Notably the image sets PUSHFREE_DB_FILE=/var/lib/pushfree/pushfree.db so the
+# database lands in the persistent named volume regardless of this file.
+#
+# This mirrors the schema in server/internal/config/config.go (Config). See
+# server/pushfree.example.toml for the local-dev variant.
+
+# Config schema version. Must match the binary's expected version, otherwise
+# startup is refused. Bump only when the schema changes in a breaking way.
+version = 1
+
+# Address the HTTP(S) server listens on. The container exposes 2586.
+listen-addr = ":2586"
+
+# Built-in TLS. Leave BOTH empty (default) to serve plain HTTP behind a
+# reverse proxy (recommended). Setting only one is a startup error.
+#
+# To serve HTTPS directly, mount your certs into the container, e.g. add to
+# docker-compose.yml volumes:
+#   - ./tls/fullchain.pem:/etc/pushfree/tls/fullchain.pem:ro
+#   - ./tls/privkey.pem:/etc/pushfree/tls/privkey.pem:ro
+# then set:
+# tls-cert-file = "/etc/pushfree/tls/fullchain.pem"
+# tls-key-file  = "/etc/pushfree/tls/privkey.pem"
+#
+# NOTE: with built-in TLS enabled, the image HEALTHCHECK (plain HTTP) will mark
+# the container unhealthy. Either run behind a reverse proxy and keep TLS off,
+# or disable the container healthcheck and probe over HTTPS externally.
+tls-cert-file = ""
+tls-key-file = ""
+
+# Public base URL clients use to reach this server, e.g.
+# "https://push.example.com". Used for absolute callback/redirect URLs.
+base-url = ""
+
+# SQLite database file. Overridden in the image to /var/lib/pushfree/pushfree.db
+# so it lives in the persistent volume; shown here for completeness.
+db-file = "/var/lib/pushfree/pushfree.db"
+
+# Postgres connection URL. Empty (default) uses SQLite. To use Postgres, start
+# the optional profile (`docker compose --profile postgres up -d`) and set this
+# (or PUSHFREE_DB_URL), e.g.:
+# db-url = "postgres://pushfree:pushfree@pushfree-postgres:5432/pushfree?sslmode=disable"
+db-url = ""
+
+# Optional path to an FCM v1 service-account JSON (mount it into the container).
+# Omit to keep the FCM delivery channel disabled; the server still starts cleanly.
+fcm-credentials-file = ""
+
+# WebSocket/SSE keepalive interval.
+keepalive-interval = "45s"
+
+# Per-user monthly message quota (count of sends, not delivery attempts).
+quota-monthly = 10000
+
+# How long delivered messages are retained before the sweeper deletes them.
+# 720h = 30d (a documented deviation from Pushover's 21d; see API-COMPAT.md).
+messages-retention = "720h"
+
+# How long an undownloaded attachment's BLOB is kept (row survives; bytes drop).
+attachment-retention = "72h"
+
+# How often the retention sweeper runs. A sweep also runs once at startup.
+sweeper-interval = "1h"
+
+# Budget for the graceful-shutdown tail (notably the WAL checkpoint) after
+# SIGTERM/SIGINT. The HTTP drain is capped separately.
+shutdown-timeout = "10s"
+
+# Windows/testing aid. Leave false; containers stop via SIGTERM.
+shutdown-on-stdin-eof = false
+
+# Hosts permitted as receipt callback targets. Private/loopback/link-local/
+# RFC1918/ULA addresses stay blocked by default; list public hosts you trust.
+callback-allowed-hosts = []
+
+# Secret used to sign stateless session cookies (HMAC-SHA256). Set a stable
+# value (or PUSHFREE_AUTH_SECRET) so logins survive restarts; leave empty to
+# generate a random per-process secret (WARN logged, sessions reset on restart).
+auth-secret = ""
