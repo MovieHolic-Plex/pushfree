@@ -18,11 +18,7 @@ pub const WINDOW_TITLE: &str = "PushFree";
 /// Kept as a pure function so the tray contract (which items exist and in what
 /// order) is asserted by unit tests independently of the Tauri runtime.
 pub fn tray_menu_items() -> Vec<(&'static str, &'static str)> {
-    vec![
-        ("show", "Show"),
-        ("hide", "Hide"),
-        ("quit", "Quit"),
-    ]
+    vec![("show", "Show"), ("hide", "Hide"), ("quit", "Quit")]
 }
 
 /// Validate a reverse-DNS identifier (e.g. `net.pushfree.desktop`).

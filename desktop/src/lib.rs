@@ -6,11 +6,12 @@
 //! todos (37/38/39).
 
 mod config;
+pub mod ws;
 
 use tauri::{
-    Manager,
     menu::{IsMenuItem, Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    Manager,
 };
 use tauri_plugin_autostart::ManagerExt;
 
@@ -34,9 +35,7 @@ pub fn run() {
                 );
             }
             if !config::is_valid_identifier(identifier) {
-                eprintln!(
-                    "[pushfree] WARNING: invalid reverse-DNS identifier: {identifier}"
-                );
+                eprintln!("[pushfree] WARNING: invalid reverse-DNS identifier: {identifier}");
             }
 
             // --- Tray menu: built from the single source of truth -----------
