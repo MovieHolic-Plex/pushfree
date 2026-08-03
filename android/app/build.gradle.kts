@@ -10,19 +10,69 @@ android {
     namespace = "net.pushfree.android"
     compileSdk = 35
 
+    // ---- Versioning (single source: android/gradle.properties) ----
+    // versionCode/versionName live ONLY in gradle.properties
+    // (pushfree.versionCode / pushfree.versionName) so the F-Droid metadata
+    // (android/metadata/net.pushfree.android.yml) and release tooling read a
+    // single value. Bump there and update the yml mirror in the same commit.
+    val pushfreeVersionCode = (project.property("pushfree.versionCode") as String).toInt()
+    val pushfreeVersionName = project.property("pushfree.versionName") as String
+
     defaultConfig {
         applicationId = "net.pushfree.android"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = pushfreeVersionCode
+        versionName = pushfreeVersionName
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    // ---- Release signing ----
+    // A production release is signed with a keystore supplied through env vars:
+    //   PUSHFREE_KEYSTORE          - path to the .keystore/.jks file
+    //   PUSHFREE_KEYSTORE_PASSWORD - keystore password
+    //   PUSHFREE_KEY_ALIAS         - key alias inside the keystore
+    //   PUSHFREE_KEY_PASSWORD      - password for that key
+    // When ANY of these is unset (CI, F-Droid reproducible builds, local dev)
+    // the release variant transparently falls back to the AGP-managed debug
+    // keystore (~/.android/debug.keystore) so `./gradlew assembleRelease`
+    // ALWAYS produces an installable APK and the build never fails on missing
+    // secrets. A debug-signed release MUST NEVER be published to a store; the
+    // release workflow gates on the env vars before upload. See
+    // android/RELEASING.md. To verify which key signed an APK:
+    //   apksigner verify --print-certs app/build/outputs/apk/release/app-release.apk
+    val pushfreeKeystorePath = providers.environmentVariable("PUSHFREE_KEYSTORE").orNull
+    val pushfreeKeystorePassword = providers.environmentVariable("PUSHFREE_KEYSTORE_PASSWORD").orNull
+    val pushfreeKeyAlias = providers.environmentVariable("PUSHFREE_KEY_ALIAS").orNull
+    val pushfreeKeyPassword = providers.environmentVariable("PUSHFREE_KEY_PASSWORD").orNull
+
+    signingConfigs {
+        create("release") {
+            if (pushfreeKeystorePath != null &&
+                pushfreeKeystorePassword != null &&
+                pushfreeKeyAlias != null &&
+                pushfreeKeyPassword != null) {
+                storeFile = file(pushfreeKeystorePath)
+                storePassword = pushfreeKeystorePassword
+                keyAlias = pushfreeKeyAlias
+                keyPassword = pushfreeKeyPassword
+            } else {
+                // Fallback: reuse the debug keystore (auto-managed by AGP).
+                // Keeps the release variant buildable/installable w/o secrets.
+                val debug = signingConfigs.getByName("debug")
+                storeFile = debug.storeFile
+                storePassword = debug.storePassword
+                keyAlias = debug.keyAlias
+                keyPassword = debug.keyPassword
+            }
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",

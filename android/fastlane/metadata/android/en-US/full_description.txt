@@ -1,0 +1,21 @@
+Pushfree is a free, open-source, self-hosted push notification service. Run a
+single small server binary and receive alerts on your Android device without
+per-message fees, vendor lock-in, or giving your data to a third party.
+
+It speaks the Pushover HTTP API (POST /1/messages.json), so any tool that
+already integrates against Pushover can point at your server with no code
+changes. Message limits, identifiers, priority levels (-2..2), sounds, and the
+emergency-priority receipt lifecycle (retry/expire/ack/cancel) are all
+supported.
+
+This Android app connects to your server over three transports, each optional:
+- WebSocket (foreground service, survives doze, since-cursor replay)
+- Firebase Cloud Messaging (when a google-services.json is provided)
+- UnifiedPush distributor (fully Google-free)
+
+Emergency-priority (p2) messages ring until acknowledged, with an outbox that
+retries acks while offline. Messages can be end-to-end encrypted; the server
+never sees plaintext. Per-account quiet hours hold low-priority messages.
+
+Your data stays on your server. No analytics, no trackers, no cloud dependency
+beyond the optional FCM channel. Apache-2.0 licensed.

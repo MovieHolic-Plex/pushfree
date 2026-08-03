@@ -1,0 +1,85 @@
+# F-Droid build metadata for Pushfree.
+#
+# Location note: the F-Droid-conventional location for an application's own
+# metadata is `metadata/<applicationId>.yml`. In this monorepo we keep the
+# Android Gradle project under android/ and the release/signing scope of this
+# task is android/ only, so the in-repo reference metadata lives at
+# android/metadata/<applicationId>.yml. The canonical published copy lives in
+# the fdroid-data repo (metadata/net.pushfree.android.yml); this file is the
+# source the maintainer copies/mirrors when updating the F-Droid listing.
+#
+# Versioning: versionName/versionCode below MUST mirror the single source of
+# truth in android/gradle.properties (pushfree.versionName /
+# pushfree.versionCode). Update both in the same commit.
+
+Categories:
+  - Internet
+  - System
+License: Apache-2.0
+AuthorName: pushfree
+SourceCode: https://github.com/pushfree/pushfree
+IssueTracker: https://github.com/pushfree/pushfree/issues
+Changelog: https://github.com/pushfree/pushfree/releases
+
+Name: Pushfree
+AutoName: Pushfree
+Summary: Self-hosted push notifications you control
+WebSite: https://github.com/pushfree/pushfree
+
+Description: |-
+    Pushfree is a free, open-source, self-hosted push notification service.
+    Run a single small server binary and receive alerts on your Android device
+    without per-message fees, vendor lock-in, or handing your data to a third
+    party.
+
+    It speaks the Pushover HTTP API (POST /1/messages.json), so any tool that
+    already integrates against Pushover can point at your server unchanged.
+    Message limits, identifiers, priority levels (-2..2), sounds, and the
+    emergency-priority receipt lifecycle (retry/expire/ack/cancel) are
+    supported.
+
+    Transports (each optional): WebSocket foreground service (doze-tolerant,
+    since-cursor replay), Firebase Cloud Messaging (optional google-services
+    config), and UnifiedPush distributor (fully Google-free).
+
+    Emergency messages ring until acknowledged; acks retry while offline.
+    Messages may be end-to-end encrypted (server never sees plaintext).
+    Per-account quiet hours hold low-priority messages.
+
+    Your data stays on your server. No analytics, no trackers. Apache-2.0.
+
+RepoType: git
+Repo: https://github.com/pushfree/pushfree.git
+
+# Disable prebuilt APK checks; every release is built from source.
+Binaries: []
+
+Builds:
+  - versionName: 0.1.0
+    versionCode: 1
+    commit: v0.1.0
+    subdir: android
+    # Plain Gradle build (the wrapper is used). No NDK, no special setup.
+    gradle:
+      - yes
+    # Output is a signed-by-debug-keystore APK when PUSHFREE_KEYSTORE* env
+    # vars are absent (see android/RELEASING.md). F-Droid rebuilds unsigned
+    # and signs with its own key, so the debug signature here is only a
+    # convenience for local/CI verification, not the published signature.
+    output: app/build/outputs/apk/release/app-release.apk
+    prebuild: []
+
+MaintainerNotes: |-
+    - Version source of truth: android/gradle.properties
+      (pushfree.versionName / pushfree.versionCode). Mirror here per release.
+    - Release signing: see android/RELEASING.md. Builds without
+      PUSHFREE_KEYSTORE* env fall back to the debug keystore so the build is
+      always reproducible; F-Droid signs with its own key.
+    - google-services.json is intentionally absent: the FCM transport is
+      runtime-disabled and the build succeeds without it (no Google
+      dependency required for the Google-free build).
+
+AutoUpdateMode: None
+UpdateCheckMode: None
+CurrentVersion: 0.1.0
+CurrentVersionCode: 1
