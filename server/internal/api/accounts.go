@@ -23,6 +23,7 @@ type Accounts struct {
 	ttl        time.Duration
 	logger     *slog.Logger
 	ackHook    AckHook // nil until todo 25's callback worker is wired (SetAckHook)
+	livePublisher LivePublisher // nil until the realtime hub is wired (SetLivePublisher)
 }
 
 // New builds an Accounts handler group. authSecret signs stateless session

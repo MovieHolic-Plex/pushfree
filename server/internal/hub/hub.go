@@ -269,6 +269,21 @@ func (h *Hub) Close() {
 	h.closeOnce.Do(func() { close(h.done) })
 }
 
+// PublishFanout resolves and live-publishes already-stored message rows for
+// one send to each row's recipient. It is the seam the messages.json ingest
+// handler calls after a successful Ingest so connected WS/SSE clients receive
+// the message in real time, in addition to the durable store row that
+// since-replay serves on the next connect. send carries the content fields;
+// each message row carries the recipient user id and the DB-assigned message
+// id that the subscribe-before-replay write loop de-duplicates against. A
+// publish with no live subscriber is a no-op (the row is already durable),
+// so this is safe to call unconditionally after Ingest.
+func (h *Hub) PublishFanout(ctx context.Context, send store.Send, msgs []store.Message) {
+	for _, m := range msgs {
+		h.Publish(m.RecipientUserID, fromRow(m, send))
+	}
+}
+
 // Publish delivers msg to every live transport of userID. It is non-blocking:
 // if a connection's inbox is full the connection is force-closed (it will
 // reconnect and replay via since) so a slow client cannot stall the publisher

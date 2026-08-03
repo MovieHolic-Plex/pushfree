@@ -328,6 +328,16 @@ func (a *Accounts) messagesHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// --- Live fan-out ------------------------------------------------------
+	// Publish each newly-stored message row to the recipient's live WS/SSE
+	// transports (if any are connected). Best-effort: a publish with no live
+	// subscriber is a no-op (the message is already durable and is served by
+	// since-replay on the next connect). The message ids were written back by
+	// Ingest so the hub's subscribe-before-replay de-duplication is exact.
+	if a.livePublisher != nil {
+		a.livePublisher.PublishFanout(r.Context(), send, msgs)
+	}
+
 	// --- Quota: 1 per recipient, then attach the live headers --------------
 	// The fan-out charges one quota unit per CONCRETE recipient, not per key:
 	// a group key with N members costs N. A single Increment by the recipient

@@ -63,6 +63,11 @@ func New(cfg *config.Config, logger *slog.Logger) *Server {
 // groups after construction without disturbing /health or /metrics.
 func (s *Server) Mux() *http.ServeMux { return s.mux }
 
+// Hub returns the realtime hub, or nil before MountRealtime is called. Used
+// by wiring (main) to plug the hub into the accounts live-publish seam after
+// the hub has been constructed.
+func (s *Server) Hub() *hub.Hub { return s.hub }
+
 // Metrics returns the pushfree_* collectors so other server workers (hub,
 // receipts, transports) can record delivery/ack observations without each
 // owning a registry. It is never nil for a Server built by New.

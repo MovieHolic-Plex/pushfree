@@ -50,6 +50,24 @@ func (w *statusWriter) Write(b []byte) (int, error) {
 	return w.ResponseWriter.Write(b)
 }
 
+// Unwrap exposes the underlying http.ResponseWriter so capability-sensitive
+// callers can reach interfaces statusWriter does not implement itself:
+// http.Hijacker (required by the coder/websocket upgrade at GET /1/ws) and
+// http.Flusher (required by the SSE streaming handler). Without it,
+// websocket.Accept finds neither Hijacker nor an Unwrapper on statusWriter
+// and returns HTTP 501, breaking every live WS connection. The metrics
+// wrapper still observes WriteHeader/Write; a hijacked WS writes its upgrade
+// response through the raw conn, which statusOrZero reports honestly as 0.
+// Unwrap exposes the underlying http.ResponseWriter so capability-sensitive
+// callers can reach interfaces statusWriter does not implement itself:
+// http.Hijacker (required by the coder/websocket upgrade at GET /1/ws) and
+// http.Flusher (required by the SSE streaming handler). Without it,
+// websocket.Accept finds neither Hijacker nor an Unwrapper on statusWriter
+// and returns HTTP 501, breaking every live WS connection. The metrics
+// wrapper still observes WriteHeader/Write; a hijacked WS writes its upgrade
+// response through the raw conn, which statusOrZero reports honestly as 0.
+func (w *statusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
 // RequestLogger returns middleware that assigns each request a stable
 // request_id, echoes it in the X-Request-ID response header, and emits one
 // slog line per request carrying request_id, method, path, status, and

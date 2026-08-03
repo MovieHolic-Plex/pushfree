@@ -123,6 +123,11 @@ func run() error {
 	// the persisted canceled state stops retries regardless.
 	api.NewCancelAPI(st.Repos(), sqlite.NewCancelRepo(st.DB()), nil, logger).Register(srv.Mux())
 	srv.MountRealtime(st.Repos(), authSecret)
+	// Wire the realtime hub as the live-publish destination for message
+	// ingests: a successful POST /1/messages.json now fans the just-stored
+	// rows out to every connected WS/SSE transport of the recipient. Must
+	// run after MountRealtime constructs the hub.
+	accounts.SetLivePublisher(srv.Hub())
 	logger.Info("starting pushfree server", "listen-addr", cfg.ListenAddr, "tls", cfg.TLSCertFile != "")
 	err = srv.Run(ctx)
 

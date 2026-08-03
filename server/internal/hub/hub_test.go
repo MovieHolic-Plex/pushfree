@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -18,6 +19,7 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/pushfree/pushfree/internal/hub"
+	"github.com/pushfree/pushfree/internal/metrics"
 	"github.com/pushfree/pushfree/internal/store"
 	"github.com/pushfree/pushfree/internal/store/sqlite"
 )
@@ -645,4 +647,74 @@ func readSSEEvent(scanner *bufio.Scanner) (event, data string, ok bool) {
 		return "", "", false
 	}
 	return event, data, false
+}
+
+// TestServeWSUpgradesThroughRequestLogger is the F3 regression test for the
+// live WS delivery defect. The production server wraps the hub's mux in
+// metrics.RequestLogger; its statusWriter embedded http.ResponseWriter
+// without exposing Hijacker or Unwrap(), so coder/websocket.Accept could not
+// hijack and every /1/ws upgrade returned HTTP 501. The hub's own unit tests
+// served h.Routes() directly (bypassing the middleware) and stayed green,
+// masking the break. This test wraps h.Routes() in RequestLogger exactly as
+// server.New does, then proves (a) the upgrade now succeeds and reaches the
+// "open" frame, and (b) a message published via the ingest seam
+// (PublishFanout) is delivered live to the connected client. Pre-fix it
+// fails at the dial with "expected handshake response status code 101 but
+// got 501".
+func TestServeWSUpgradesThroughRequestLogger(t *testing.T) {
+	e := newEnv(t)
+
+	// Reproduce the live wiring: hub routes behind the request-logging
+	// middleware whose statusWriter is the regression surface.
+	bundle := metrics.NewBundle()
+	wrapped := metrics.RequestLogger(slog.Default(), bundle.Metrics)(e.hub.Routes())
+	srv := httptest.NewServer(wrapped)
+	t.Cleanup(srv.Close)
+
+	// (a) Upgrade + authorize via the login frame, through the middleware.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	u := strings.Replace(srv.URL, "http://", "ws://", 1) + "/1/ws"
+	conn, _, err := websocket.Dial(ctx, u, nil)
+	if err != nil {
+		t.Fatalf("ws dial through RequestLogger failed (pre-fix: HTTP 501): %v", err)
+	}
+	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "bye") }()
+	login := fmt.Sprintf(`{"type":"login","device_id":%q,"secret":%q}`, e.deviceID, e.secret)
+	if err := conn.Write(ctx, websocket.MessageText, []byte(login)); err != nil {
+		t.Fatalf("write login: %v", err)
+	}
+	open := readWS(t, conn)
+	if open.Type != "open" {
+		t.Fatalf("expected open frame through middleware, got %+v", open)
+	}
+
+	// (b) Seed ONE message committed AFTER the dial (so it is outside the
+	// replay page) and publish it through the ingest seam. It must arrive
+	// live on the connected client with its real DB id.
+	fanout := store.Fanout{
+		Send: store.Send{
+			AppID: e.appID, SenderUserID: e.userID, Priority: 2,
+			Body: "F3 live regression push", Timestamp: 99, CreatedAt: testTime,
+		},
+		Messages: []store.Message{{RecipientUserID: e.userID, CreatedAt: testTime}},
+	}
+	sendID, err := e.repos.Sends.CreateFanout(ctx, &fanout)
+	if err != nil {
+		t.Fatalf("seed send: %v", err)
+	}
+	rows, err := e.repos.Messages.ListSince(ctx, e.userID, open.LastMessageID, 5)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("expected 1 new message row, got %d (%v)", len(rows), err)
+	}
+	seeded := rows[0]
+	send := fanout.Send
+	send.ID = sendID
+	e.hub.PublishFanout(ctx, send, []store.Message{seeded})
+
+	frame := readWSMessage(t, conn)
+	if frame.Body != "F3 live regression push" || frame.ID != seeded.ID {
+		t.Fatalf("live message not delivered through middleware: %+v want body=%q id=%d",
+			frame, "F3 live regression push", seeded.ID)
+	}
 }

@@ -40,9 +40,12 @@ func (r *IngestRepo) Ingest(ctx context.Context, in *store.IngestInput) (int64, 
 		}
 		sendID = id
 		for i := range in.Messages {
-			m := in.Messages[i]
-			m.SendID = id
-			if _, err := insertMessage(ctx, q, &m); err != nil {
+			// Mutate in-place so the DB-assigned id (set by insertMessage) is
+			// visible to the caller through the *IngestInput pointer; the live
+			// fan-out path publishes precisely these rows using their real ids
+			// for subscribe-before-replay de-duplication.
+			in.Messages[i].SendID = id
+			if _, err := insertMessage(ctx, q, &in.Messages[i]); err != nil {
 				return err
 			}
 		}
