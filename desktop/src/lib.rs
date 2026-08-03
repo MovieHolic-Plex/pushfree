@@ -6,6 +6,7 @@
 //! todos (37/38/39).
 
 mod config;
+pub mod notify;
 pub mod ws;
 
 use tauri::{
@@ -23,6 +24,7 @@ pub fn run() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             // --- Config sanity check -----------------------------------------
             // The identifier is compiled into the binary from tauri.conf.json;
@@ -99,6 +101,13 @@ pub fn run() {
                 eprintln!("[pushfree] autostart enable failed: {err}");
             }
 
+            // --- Notification + ack pipeline (todo 38) ----------------------
+            // Production sink: tauri-plugin-notification. Server config arrives
+            // from env vars as a minimal bridge until todo 39 adds a persisted
+            // settings store; with no config the tray app still runs and the
+            // pipeline stays inert.
+            wire_notifications(app);
+
             Ok(())
         })
         .run(tauri::generate_context!())
@@ -121,4 +130,110 @@ fn app_icon() -> tauri::image::Image<'static> {
         rgba.extend_from_slice(&PIXEL);
     }
     tauri::image::Image::new(rgba.leak(), W, H)
+}
+
+// ---------------------------------------------------------------------------
+// Notification + ack wiring (todo 38)
+// ---------------------------------------------------------------------------
+
+/// Minimal server config sourced from the environment until todo 39 adds a
+/// persisted settings store. `http_base` feeds the ack HTTP client; `ws_url` is
+/// the scheme-converted WebSocket URL for the live receive loop.
+struct EnvConfig {
+    ws_url: String,
+    http_base: String,
+    device_id: String,
+    secret: String,
+}
+
+fn read_env_config() -> Option<EnvConfig> {
+    let http_base = std::env::var("PUSHFREE_SERVER_URL").ok()?;
+    let device_id = std::env::var("PUSHFREE_DEVICE_ID").ok()?;
+    let secret = std::env::var("PUSHFREE_SECRET").ok()?;
+    if http_base.is_empty() || device_id.is_empty() || secret.is_empty() {
+        return None;
+    }
+    Some(EnvConfig {
+        ws_url: http_to_ws(&http_base),
+        http_base,
+        device_id,
+        secret,
+    })
+}
+
+/// Convert an `http(s)://` server base to the `ws(s)://` form the WS client
+/// needs. A trailing slash is tolerated.
+fn http_to_ws(http_base: &str) -> String {
+    let trimmed = http_base.trim_end_matches('/');
+    if let Some(rest) = trimmed.strip_prefix("https://") {
+        format!("wss://{rest}")
+    } else if let Some(rest) = trimmed.strip_prefix("http://") {
+        format!("ws://{rest}")
+    } else {
+        trimmed.to_string()
+    }
+}
+
+/// Build the production notification sink, ack client, and pipeline; spawn the
+/// ack reporter and the WS receive loop that feeds message events into the
+/// pipeline. With no env config the function logs and returns (the tray app
+/// still runs; todo 39 starts the loop from persisted settings).
+fn wire_notifications(app: &tauri::App<tauri::Wry>) {
+    use std::sync::Arc;
+
+    let Some(cfg) = read_env_config() else {
+        eprintln!(
+            "[pushfree] no server config (set PUSHFREE_SERVER_URL, \
+             PUSHFREE_DEVICE_ID, PUSHFREE_SECRET); WS loop not started"
+        );
+        return;
+    };
+
+    let sink: Arc<dyn notify::NotifySink> = Arc::new(notify::ToastSink::new(app.handle().clone()));
+    let ack_client = match notify::HttpAckClient::new(cfg.http_base.clone(), cfg.secret.clone()) {
+        Ok(c) => Arc::new(c),
+        Err(err) => {
+            eprintln!("[pushfree] ack client config error: {err}");
+            return;
+        }
+    };
+
+    let (ack_tx, ack_rx) = tokio::sync::mpsc::channel::<i64>(256);
+    let reporter = notify::AckReporter::new(ack_rx, ack_client, notify::DEFAULT_ACK_RETRY_DELAY);
+    tauri::async_runtime::spawn(reporter.run());
+
+    let pipeline = Arc::new(notify::Pipeline::new(
+        notify::Dedup::new(None),
+        sink,
+        ack_tx,
+    ));
+
+    // Drive decoded WS messages into the pipeline (notify + ack).
+    let ws_cfg = ws::WsConfig::new(cfg.ws_url, cfg.device_id, cfg.secret);
+    let ws_client = match ws::Client::new(ws_cfg) {
+        Ok(c) => Arc::new(c),
+        Err(err) => {
+            eprintln!("[pushfree] WS client config error: {err}");
+            return;
+        }
+    };
+    let pipeline_for_drive = pipeline.clone();
+    tauri::async_runtime::spawn(async move {
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<ws::Event>(64);
+        // Sidecar: decode message frames into pipeline.handle calls.
+        let drive = tauri::async_runtime::spawn(async move {
+            while let Some(ev) = rx.recv().await {
+                if let ws::Event::Message(m) = ev {
+                    pipeline_for_drive.handle(&m).await;
+                }
+            }
+        });
+        // App-lifetime run; the shutdown signal never resolves, so the loop runs
+        // until the Tauri runtime is dropped on exit.
+        ws_client.run(tx, std::future::pending::<()>()).await;
+        drive.abort();
+    });
+
+    // Expose the pipeline as managed state for todo 39 (settings UI / control).
+    app.manage(pipeline);
 }
