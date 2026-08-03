@@ -17,20 +17,63 @@ PushFree는 셀프 호스팅이 가능한 [Pushover](https://pushover.net) API �
 
 ## 빠른 시작
 
-소스에서 빌드하려면 Go 툴체인(1.26 이상)이 설치되어 있어야 합니다.
+### 바이너리 준비
+
+**사전 빌드된 바이너리 (권장).** [최신 릴리스](https://github.com/MovieHolic-Plex/pushfree/releases)에서
+해당 플랫폼의 정적 바이너리를 내려받아 실행 권한을 주세요. 서버는 순수 Go라 cgo도,
+런타임 의존성도 없습니다. 에셋 이름: `pushfree-linux-amd64`,
+`pushfree-linux-arm64`, `pushfree-darwin-arm64`, `pushfree-windows-amd64.exe`.
 
 ```sh
-# 1. Build the single static binary (pure Go, no cgo).
+# Linux / macOS (아래는 간결함을 위해 이름을 줄여 표기):
+chmod +x pushfree-linux-amd64
+# Windows: pushfree-windows-amd64.exe 를 실행
+```
+
+**소스에서 빌드** (Go 1.26 이상 툴체인 필요):
+
+```sh
 cd server
 go build -o pushfree ./cmd/pushfree
+```
 
-# 2. Create an account. The FIRST account becomes the admin.
-./pushfree &  # listens on :2586 by default
+### 서버 실행
+
+```sh
+./pushfree   # Windows: pushfree-windows-amd64.exe   — 기본적으로 :2586에서 수신
+```
+
+**부팅에 설정 파일은 필요하지 않습니다.** `-config` 파일과 `PUSHFREE_*` 환경변수가
+없으면 서버는 `:2586`에서 HTTP로 서비스하고 데이터는 로컬 `pushfree.db` SQLite
+파일에 저장합니다. TOML 설정 파일을 제공하는 경우 엄격하게 강제되는 키는
+`version = 1`(스키마 버전, 다른 값은 시작 시 거부됨)뿐이며, `tls-cert-file` /
+`tls-key-file`은 둘 다 설정하거나 둘 다 비워야 합니다. 나머지 모든 키는 기본값이
+있어 선택 사항입니다 ([docs/configuration.md](docs/configuration.md) 참고). 운영
+환경에서는 안정적인 `auth-secret`(또는 `PUSHFREE_AUTH_SECRET`)을 설정하세요.
+비워두면 프로세스마다 무작위 비밀키가 생성되어 **재시작 때마다 모든 세션이
+무효화됩니다**.
+
+```sh
+curl -sf http://localhost:2586/health   # -> {"status":"ok"}
+```
+
+### 관리자 계정 만들기
+
+CLI 플래그, 환경변수, 별도의 관리자 생성 엔드포인트는 없습니다. **첫 번째**
+`POST /v1/accounts` 가입 요청이 서버 측에서 `role="admin"`으로 지정됩니다(insert
+내부의 원자적 사용자 수 검사). 이후의 모든 가입은 일반 사용자입니다.
+
+```sh
 curl -sf -X POST http://localhost:2586/v1/accounts \
   -H 'Content-Type: application/json' \
   -d '{"email":"you@example.com","password":"correct-horse"}'
+# -> {"status":1,"user_key":"<30자 키>"}   (비밀번호는 8자 이상이어야 합니다)
+```
 
-# 3. Log in (sets a session cookie) and create an app token.
+### 로그인하고 메시지 보내기
+
+```sh
+# 로그인 (세션 쿠키 설정) 하고 앱 토큰을 만듭니다.
 curl -sc cookies.txt -X POST http://localhost:2586/v1/accounts/login \
   -H 'Content-Type: application/json' \
   -d '{"email":"you@example.com","password":"correct-horse"}'
@@ -38,13 +81,22 @@ TOKEN=$(curl -sb cookies.txt -X POST http://localhost:2586/v1/apps \
   -H 'Content-Type: application/json' -d '{"name":"monitoring"}' | sed -E 's/.*"token":"([^"]+)".*/\1/')
 USERKEY=$(curl -sb cookies.txt http://localhost:2586/v1/accounts/me | sed -E 's/.*"user_key":"([^"]+)".*/\1/')
 
-# 4. Send a message (Pushover-compatible).
+# 메시지 전송 (Pushover 호환).
 curl -sf -X POST http://localhost:2586/1/messages.json \
   -d "token=$TOKEN" -d "user=$USERKEY" -d "message=hello from pushfree"
-
-# 5. Health check.
-curl -sf http://localhost:2586/health   # -> {"status":"ok"}
 ```
+
+### TLS
+
+두 가지 옵션 중 하나를 선택하세요 (자세한 내용은
+[docs/self-hosting.md](docs/self-hosting.md)):
+
+- **리버스 프록시가 TLS를 종료 (권장)** — `tls-cert-file`과 `tls-key-file`을
+  비워 두면(기본값) 서버는 일반 HTTP로 서비스하고, TLS 종료 리버스 프록시(Caddy,
+  nginx 등) 뒤에 둡니다.
+- **내장 TLS** — `tls-cert-file`과 `tls-key-file` **둘 다** 설정합니다 (또는
+  `PUSHFREE_TLS_CERT_FILE` / `PUSHFREE_TLS_KEY_FILE` 환경변수). 하나만 설정하면
+  시작 시 에러입니다.
 
 ### Docker
 
@@ -59,7 +111,7 @@ docker compose -f deploy/docker-compose.yml up -d
 curl -sf localhost:2586/health   # -> {"status":"ok"}
 ```
 
-TLS, 리버스 프록시, 백업, Postgres 옵션은
+리버스 프록시, 백업, Postgres 옵션은
 [docs/self-hosting.md](docs/self-hosting.md)를 참고하세요.
 
 ## 기능
