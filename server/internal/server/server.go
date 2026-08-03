@@ -15,44 +15,58 @@ import (
 	"github.com/pushfree/pushfree/internal/api"
 	"github.com/pushfree/pushfree/internal/config"
 	"github.com/pushfree/pushfree/internal/hub"
+	"github.com/pushfree/pushfree/internal/metrics"
 	"github.com/pushfree/pushfree/internal/store"
 	"github.com/pushfree/pushfree/internal/up"
 	"github.com/pushfree/pushfree/internal/webmount"
 )
 
-// Server is the pushfree HTTP server. It embeds an http.Handler (the mux) so
-// it satisfies http.Handler directly, which keeps both httptest-based unit
-// tests and the live http.Server simple.
+// Server is the pushfree HTTP server. It embeds an http.Handler (the
+// request-logging-wrapped mux) so it satisfies http.Handler directly, which
+// keeps both httptest-based unit tests and the live http.Server simple.
 type Server struct {
 	cfg    *config.Config
 	logger *slog.Logger
 	mux    *http.ServeMux
 	http.Handler
-	srv *http.Server
-	hub *hub.Hub // nil until MountRealtime; closed on graceful shutdown
+	srv     *http.Server
+	hub     *hub.Hub         // nil until MountRealtime; closed on graceful shutdown
+	metrics *metrics.Metrics // pushfree_* collectors; exposed via Metrics()
 }
 
 // New builds a Server with the dependency-free routes registered: the
-// /health liveness probe and the webmount dashboard (/admin/ embed +
-// /api/ JSON 404 envelope). Route groups that need external collaborators
-// (the accounts API under /v1/, which needs the store Repos and auth
-// secret) are mounted by the caller on Mux() after construction; that keeps
-// this package free of store/secret wiring.
+// /health liveness probe, the /metrics Prometheus endpoint (todo 15), and
+// the webmount dashboard (/admin/ embed + /api/ JSON 404 envelope). The mux
+// is wrapped by the request-logging middleware, which assigns a per-request
+// id (echoed in X-Request-ID and the slog line) and records the send/
+// messages-received/ws-clients observations. Route groups that need external
+// collaborators (the accounts API under /v1/, which needs the store Repos
+// and auth secret) are mounted by the caller on Mux() after construction;
+// because the middleware wraps the mux (not a snapshot), late-registered
+// routes still flow through it.
 func New(cfg *config.Config, logger *slog.Logger) *Server {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", health)
+	bundle := metrics.NewBundle()
+	mux.Handle("GET /metrics", bundle.Handler)
 	webmount.Register(mux)
 	return &Server{
 		cfg:     cfg,
 		logger:  logger,
 		mux:     mux,
-		Handler: mux,
+		metrics: bundle.Metrics,
+		Handler: metrics.RequestLogger(logger, bundle.Metrics)(mux),
 	}
 }
 
 // Mux returns the root ServeMux so callers can register additional route
-// groups after construction without disturbing /health.
+// groups after construction without disturbing /health or /metrics.
 func (s *Server) Mux() *http.ServeMux { return s.mux }
+
+// Metrics returns the pushfree_* collectors so other server workers (hub,
+// receipts, transports) can record delivery/ack observations without each
+// owning a registry. It is never nil for a Server built by New.
+func (s *Server) Metrics() *metrics.Metrics { return s.metrics }
 
 // MountRealtime wires the Open Client transports and the UnifiedPush
 // distributor into the root mux. It builds the REAL session resolver
