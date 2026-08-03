@@ -59,6 +59,22 @@ func (a *Accounts) Register(mux *http.ServeMux) {
 	// the form-body token and calls SetLimitHeaders again so remaining
 	// reflects the just-accepted send.
 	mux.HandleFunc("POST /1/messages.json", a.limitWrap(a.messagesHandler))
+
+	// Pushover-compatible companion endpoints (todo 11). validate.json and
+	// sounds.json are read-only metadata routes authenticated by an app
+	// token (form body for validate, query string for sounds). limitWrap
+	// keeps them on the same X-Limit-App-* header convention as the send
+	// path; neither consumes quota.
+	mux.HandleFunc("POST /1/users/validate.json", a.limitWrap(a.validateHandler))
+	mux.HandleFunc("GET /1/sounds.json", a.limitWrap(a.soundsHandler))
+
+	// Delivery-group management (session-auth, todo 9). A group_key is the
+	// same 30-char format as a user_key and can be used verbatim in the
+	// "user" field of /1/messages.json for fan-out to members.
+	mux.HandleFunc("POST /1/groups.json", a.requireSession(a.createGroup))
+	mux.HandleFunc("GET /1/groups.json", a.requireSession(a.listGroups))
+	mux.HandleFunc("PUT /1/groups.json", a.requireSession(a.updateGroup))
+	mux.HandleFunc("DELETE /1/groups.json", a.requireSession(a.deleteGroup))
 }
 
 // --- JSON helpers -----------------------------------------------------------
