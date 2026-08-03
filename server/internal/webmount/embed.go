@@ -12,11 +12,14 @@
 // target produced by todos 40 and 42) is outside the module and cannot be
 // referenced by go:embed (patterns may not contain ".."). The embedded
 // assets therefore live in this package under web/out as a server-local copy.
-// Todo 42 refreshes that copy from the real build:
+// Todo 42 refreshes that copy from the real build (run from the repo root):
 //
-//	pnpm build && cp -r web/out server/internal/webmount/web/out
+//	cd web && pnpm install --frozen-lockfile && pnpm build &&
+//	cp -r web/out server/internal/webmount/web/out
 //
-// Until then both copies carry the same placeholder index.html.
+// The copy is committed (the root .gitignore's "out/" rule is overridden via
+// `git add -f` on this path) so a plain `go build` embeds the real dashboard
+// with no Node toolchain required at build time.
 package webmount
 
 import "embed"
