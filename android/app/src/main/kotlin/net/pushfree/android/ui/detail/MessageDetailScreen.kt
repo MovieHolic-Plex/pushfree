@@ -14,7 +14,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.AttachFile
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
@@ -93,13 +93,15 @@ fun MessageDetailContent(
                     style = MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.SemiBold,
                 )
-                if (state.attachmentUri != null) {
-                    AttachmentCard(uri = state.attachmentUri)
+                val attachmentUri = state.attachmentUri
+                if (attachmentUri != null) {
+                    AttachmentCard(uri = attachmentUri)
                 }
                 HtmlBody(body = state.body)
-                if (state.canAcknowledge && state.receiptId != null && onAcknowledge != null) {
+                val receiptId = state.receiptId
+                if (state.canAcknowledge && receiptId != null && onAcknowledge != null) {
                     Button(
-                        onClick = { onAcknowledge(state.receiptId) },
+                        onClick = { onAcknowledge(receiptId) },
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Text("Acknowledge")
@@ -155,7 +157,7 @@ private fun AttachmentCard(uri: String) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(
-                Icons.Filled.AttachFile,
+                Icons.Filled.Info,
                 contentDescription = "Attachment",
                 tint = MaterialTheme.colorScheme.onSecondaryContainer,
             )

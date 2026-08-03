@@ -10,6 +10,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.toHttpUrlOrNull
 import org.json.JSONObject
 import java.io.IOException
 import java.util.concurrent.TimeUnit
@@ -143,7 +144,7 @@ class OkHttpDeviceRegistrar(
                 trimmed.startsWith("http://") || trimmed.startsWith("https://") -> trimmed
                 else -> "https://$trimmed"
             }
-            val url = runCatching { HttpUrl.parse(withScheme) }.getOrNull() ?: return null
+            val url = withScheme.toHttpUrlOrNull() ?: return null
             if (url.scheme != "http" && url.scheme != "https") return null
             if (url.encodedPath.isNotEmpty() && url.encodedPath != "/") return null
             val defaultPort = if (url.scheme == "https") 443 else 80

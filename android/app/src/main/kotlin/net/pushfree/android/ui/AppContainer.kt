@@ -18,7 +18,7 @@ class AppContainer(context: Context) {
         context.applicationContext,
         PushFreeDatabase::class.java,
         PushFreeDatabase.NAME,
-    ).fallbackToDestructiveMigration(false).build()
+    ).build()
 
     val repository: SubscriptionRepository =
         RoomSubscriptionRepository(database.subscriptionDao(), database.messageDao())
