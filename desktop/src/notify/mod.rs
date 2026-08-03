@@ -423,11 +423,17 @@ pub struct Pipeline {
     dedup: Dedup,
     sink: Arc<dyn NotifySink>,
     ack_tx: tokio::sync::mpsc::Sender<i64>,
+    /// Optional E2EE key (64-hex). When present, encrypted message fields are
+    /// decrypted before the notification is shown (todo 44); on any failure a
+    /// safe placeholder is displayed. `None` => encrypted messages surface as
+    /// `[undecryptable]` (error state, never garbage).
+    e2ee_key: Option<String>,
 }
 
 impl Pipeline {
     /// Wire a dedup set, a notification sink, and the ack queue sender (the
-    /// receiver side is owned by an [`AckReporter`]).
+    /// receiver side is owned by an [`AckReporter`]). No E2EE key: encrypted
+    /// messages will surface as `[undecryptable]`.
     pub fn new(
         dedup: Dedup,
         sink: Arc<dyn NotifySink>,
@@ -437,22 +443,36 @@ impl Pipeline {
             dedup,
             sink,
             ack_tx,
+            e2ee_key: None,
         }
+    }
+
+    /// Set the E2EE key used to decrypt encrypted message fields before they
+    /// reach the notification sink. Builder-style: chains off [`Pipeline::new`].
+    pub fn with_e2ee_key(mut self, key: Option<String>) -> Self {
+        self.e2ee_key = key.filter(|k| !k.is_empty());
+        self
     }
 
     /// Handle one decoded message.
     ///
     /// - Duplicate `send_id` -> returns [`HandleOutcome::Duplicate`], nothing
     ///   else happens (never notified, never acked twice).
-    /// - New `send_id` -> marks it seen, shows the notification (best-effort:
-    ///   errors are logged, never propagated), and enqueues an ack for
-    ///   `message.id`. The enqueue is awaited so a saturated queue applies
-    ///   backpressure instead of silently dropping an ack.
+    /// - New `send_id` -> marks it seen, decrypts encrypted fields (todo 44;
+    ///   failure -> safe placeholder, never garbage / never a panic), shows the
+    ///   notification (best-effort: errors are logged, never propagated), and
+    ///   enqueues an ack for `message.id`. The enqueue is awaited so a
+    ///   saturated queue applies backpressure instead of silently dropping an
+    ///   ack.
     pub async fn handle(&self, msg: &ServerMessage) -> HandleOutcome {
         if !self.dedup.observe(msg.send_id) {
             return HandleOutcome::Duplicate;
         }
-        if let Err(err) = self.sink.notify(msg) {
+        // Decrypt BEFORE notify (todo 44 hook at the notify sink path). A wrong
+        // key / tampered blob yields `[undecryptable]`; the ack below still
+        // fires on the real message id.
+        let decrypted = crate::e2ee::decrypt_message(msg, self.e2ee_key.as_deref());
+        if let Err(err) = self.sink.notify(&decrypted) {
             eprintln!("[pushfree/notify] {}", err);
         }
         if let Err(err) = self.ack_tx.send(msg.id).await {

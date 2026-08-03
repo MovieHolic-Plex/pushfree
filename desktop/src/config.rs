@@ -15,10 +15,16 @@ pub const WINDOW_TITLE: &str = "PushFree";
 
 /// The system-tray menu specification as `(id, label)` pairs, in display order.
 ///
-/// Kept as a pure function so the tray contract (which items exist and in what
-/// order) is asserted by unit tests independently of the Tauri runtime.
+/// `open` shows+focuses the window, `reconnect` restarts the WebSocket
+/// receive loop, and `quit` exits. Kept as a pure function so the tray
+/// contract (which items exist and in what order) is asserted by unit tests
+/// independently of the Tauri runtime.
 pub fn tray_menu_items() -> Vec<(&'static str, &'static str)> {
-    vec![("show", "Show"), ("hide", "Hide"), ("quit", "Quit")]
+    vec![
+        ("open", "Open"),
+        ("reconnect", "Reconnect"),
+        ("quit", "Quit"),
+    ]
 }
 
 /// Validate a reverse-DNS identifier (e.g. `net.pushfree.desktop`).
@@ -39,16 +45,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn tray_menu_has_show_hide_quit_in_order() {
+    fn tray_menu_has_open_reconnect_quit_in_order() {
         let items = tray_menu_items();
         let ids: Vec<&str> = items.iter().map(|(id, _)| *id).collect();
-        assert_eq!(ids, vec!["show", "hide", "quit"], "tray item order/ids");
+        assert_eq!(
+            ids,
+            vec!["open", "reconnect", "quit"],
+            "tray item order/ids"
+        );
         assert!(
             items.iter().all(|(_, label)| !label.is_empty()),
             "every tray label must be non-empty"
         );
         // Ensure the ids the Rust menu handler switches on actually exist.
         assert!(items.iter().any(|(id, _)| *id == "quit"));
+        assert!(items.iter().any(|(id, _)| *id == "reconnect"));
     }
 
     #[test]
