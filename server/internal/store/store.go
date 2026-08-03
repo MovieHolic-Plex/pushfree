@@ -176,6 +176,20 @@ type DLQ struct {
 	Attempts   int
 }
 
+// Group is a named delivery group owned by a user (todo 9). GroupKey is
+// exactly 30 chars [A-Za-z0-9] -- the SAME format as UserKey, so the send
+// path cannot distinguish a user_key from a group_key; the store resolves
+// each via SendRepo.ResolveRecipients. Sending to a group fans out one
+// messages row per member (H1 sends-parent model).
+type Group struct {
+	ID        int64
+	UserID    int64  // owner
+	GroupKey  string // exactly 30 chars
+	Name      string
+	Memo      string // <= 200 chars
+	CreatedAt time.Time
+}
+
 // UserRepo covers account lookup and creation.
 type UserRepo interface {
 	Create(ctx context.Context, u *User) (int64, error)
@@ -217,6 +231,19 @@ type AppRepo interface {
 type DeviceRepo interface {
 	Create(ctx context.Context, d *Device) (int64, error)
 	GetByDeviceID(ctx context.Context, deviceID string) (Device, error)
+
+	// ClearFCMToken nulls the fcm_token of the device with the given
+	// device_id. Called by the FCM delivery channel (todo 16) when FCM
+	// reports the token as UNREGISTERED or INVALID_ARGUMENT, so the device
+	// must re-register before it can receive FCM again. It is not an error
+	// if the device has no token or does not exist (idempotent clear).
+	ClearFCMToken(ctx context.Context, deviceID string) error
+
+	// ListByUser returns every device owned by userID in ascending id
+	// (registration) order, with fcm_token resolved to "" when NULL. Used by
+	// POST /1/users/validate.json (todo 11) to surface the recipient's
+	// registered device names.
+	ListByUser(ctx context.Context, userID int64) ([]Device, error)
 }
 
 // Fanout is the atomic unit of an API ingest: one send row, N per-recipient
@@ -246,6 +273,14 @@ type IngestInput struct {
 type SendRepo interface {
 	CreateFanout(ctx context.Context, f *Fanout) (sendID int64, err error)
 	GetByID(ctx context.Context, id int64) (Send, error)
+
+	// ResolveRecipients expands a list of 30-char keys (user_key or group_key)
+	// into concrete recipient user IDs to fan out to. This is the SINGLE
+	// send-time lookup path (todo 9): the caller cannot tell a user_key from a
+	// group_key, so the store resolves each. A user_key yields one recipient;
+	// a group_key yields its members. A key matching neither a user nor a
+	// group returns ErrNotFound (the caller maps this to 404).
+	ResolveRecipients(ctx context.Context, keys []string) ([]int64, error)
 }
 
 // IngestRepo performs the atomic write for one POST /1/messages.json call
@@ -317,6 +352,34 @@ type CallbackRepo interface {
 	ListDLQForCallback(ctx context.Context, callbackID int64) ([]DLQ, error)
 }
 
+// GroupRepo covers delivery-group CRUD and membership (todo 9). Member
+// identities cross the boundary as user_ids; the API layer resolves
+// user_key<->user_id so the store never parses key format.
+type GroupRepo interface {
+	Create(ctx context.Context, g *Group) (int64, error)
+	GetByID(ctx context.Context, id int64) (Group, error)
+	// GetByKey returns the group with the given group_key. Used by the send
+	// resolution path; returns ErrNotFound if no such group exists.
+	GetByKey(ctx context.Context, key string) (Group, error)
+	ListByOwner(ctx context.Context, ownerID int64) ([]Group, error)
+	// Update changes the name and memo of the group with the given id.
+	// Returns ErrNotFound if id is absent.
+	Update(ctx context.Context, id int64, name, memo string) error
+	// Delete removes the group and its members. Returns ErrNotFound if id is
+	// absent. Cascade is explicit (group_members has no ON DELETE CASCADE) so
+	// the implementation controls the order inside one transaction.
+	Delete(ctx context.Context, id int64) error
+	// SetMembers adds and removes members (by user_id) in one transaction.
+	// Adds use INSERT OR IGNORE so a duplicate add is a no-op; removes of a
+	// non-member are a no-op.
+	SetMembers(ctx context.Context, groupID int64, add, remove []int64) error
+	// ListMemberIDs returns the user_ids of the members of groupID.
+	ListMemberIDs(ctx context.Context, groupID int64) ([]int64, error)
+	// ListMemberKeys returns the user_keys of the members of groupID, for
+	// surfacing membership in the groups API response.
+	ListMemberKeys(ctx context.Context, groupID int64) ([]string, error)
+}
+
 // Repos bundles every repository interface. Concrete implementations
 // (sqlite, later postgres) produce one of these.
 type Repos struct {
@@ -331,4 +394,5 @@ type Repos struct {
 	Timers      TimerRepo
 	Callbacks   CallbackRepo
 	Ingests     IngestRepo
+	Groups      GroupRepo
 }

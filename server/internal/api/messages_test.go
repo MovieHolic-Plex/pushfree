@@ -488,29 +488,39 @@ func TestIngest(t *testing.T) {
 		}
 	})
 
-	// --- recipient mismatch (user key of another user) -> 400 -------------
-	t.Run("user_not_owner_400", func(t *testing.T) {
+	// --- recipient is another user: fan-out succeeds (todo 9) -------------
+	t.Run("user_other_fanout_succeeds", func(t *testing.T) {
 		a, base, tok, _ := ingesterUser(t)
 		c := newClient(t)
 		// Create a second user; sending to the second user's key from the
-		// first user's app token is not permitted in todo 8 (single/self).
+		// first user's app token is allowed in todo 9 (multi-user fan-out).
 		otherKey := register(t, newClient(t), base, "other@example.com", "password1")
-		_ = a
 		status, _, body, raw := postMessages(t, c, base, url.Values{
 			"token": {tok}, "user": {otherKey}, "message": {"m"},
 		})
-		requireEnvelope(t, status, body, raw, http.StatusBadRequest)
+		if status != http.StatusOK || body["status"] != float64(1) {
+			t.Fatalf("fan-out to another user should succeed: status=%d body=%s", status, raw)
+		}
+		// A message row was fanned out to the OTHER user (not the sender).
+		otherID := sessionUserID(t, a, "other@example.com")
+		msgs, err := a.repos.Messages.ListSince(context.Background(), otherID, 0, 100)
+		if err != nil {
+			t.Fatalf("list messages: %v", err)
+		}
+		if len(msgs) != 1 {
+			t.Fatalf("want 1 message for other user, got %d", len(msgs))
+		}
 	})
 
-	// --- unknown user key -> 400 ------------------------------------------
-	t.Run("unknown_user_key_400", func(t *testing.T) {
+	// --- unknown user/group key -> 404 (todo 9: not found) ----------------
+	t.Run("unknown_key_404", func(t *testing.T) {
 		_, base, tok, _ := ingesterUser(t)
 		c := newClient(t)
-		// Well-formed 30-char but not a real user_key.
+		// Well-formed 30-char but not a real user_key or group_key.
 		status, _, body, raw := postMessages(t, c, base, url.Values{
 			"token": {tok}, "user": {"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}, "message": {"m"},
 		})
-		requireEnvelope(t, status, body, raw, http.StatusBadRequest)
+		requireEnvelope(t, status, body, raw, http.StatusNotFound)
 	})
 
 	// --- attachment persisted via ingest ----------------------------------

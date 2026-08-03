@@ -30,6 +30,12 @@ const (
 	// cap for the base64 encoding of a max-size attachment (~4/3x) plus the
 	// form fields.
 	maxRequestSize = maxAttachmentSize + 4<<20
+
+	// maxRecipients caps the number of keys in the comma-separated "user"
+	// field (todo 9). Each key may expand to one user OR a group's members,
+	// so the fan-out message count can exceed this; the cap is on raw keys,
+	// matching Pushover's "<= 50 recipients" contract.
+	maxRecipients = 50
 )
 
 // deviceTokenRe matches a single device name: [A-Za-z0-9_-]+ (ASCII, so byte
@@ -43,8 +49,9 @@ var deviceTokenRe = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 //
 // Auth: the app token is read from the form body. A missing token is a 400
 // validation error (collected with the other field errors); a present-but-
-// invalid/revoked token is 401. The "user" field must resolve to the token's
-// owner for todo 8 (single-recipient / self); multi-user fan-out is todo 9.
+// invalid/revoked token is 401. The "user" field is a comma-separated list of
+// up to 50 keys (todo 9 multi-user fan-out); each key resolves to a user or a
+// group's members via the single store lookup path (ResolveRecipients).
 //
 // Every response carries a per-request UUID in the "request" field. On
 // success: {"status":1,"request":"<uuid>"} and, for priority=2, an additional
@@ -97,24 +104,35 @@ func (a *Accounts) messagesHandler(w http.ResponseWriter, r *http.Request) {
 		errs = append(errs, "token is required")
 	}
 
-	// --- Recipient (single-recipient resolution; todo 9 expands to fan-out) -
-	// Only resolvable once the caller is authenticated. The recipient must be
-	// the token's owner for todo 8 (self-send); a different/unknown user_key
-	// is reported with the same message Pushover uses for an invalid key.
-	var recipientUserID int64
-	if token != "" {
-		if userKey == "" {
-			errs = append(errs, "user key is required")
-		} else {
-			u, err := a.repos.Users.GetByUserKey(r.Context(), userKey)
-			if err != nil || u.ID != senderUserID {
-				errs = append(errs, "user key is invalid")
-			} else {
-				recipientUserID = u.ID
+	// --- Recipient list (todo 9: multi-user fan-out) ----------------------
+	// The "user" field is a comma-separated list of up to 50 keys, each a
+	// 30-char [A-Za-z0-9] identifier that is a user_key OR a group_key
+	// (indistinguishable at send time; the store resolves each). Keys are
+	// parsed and format-validated here; resolution to user IDs happens AFTER
+	// all field validation passes, so a 404 (unresolved key) is distinct from
+	// a 400 (malformed request).
+	var recipientKeys []string
+	if userKey == "" {
+		errs = append(errs, "user key is required")
+	} else {
+		for _, k := range strings.Split(userKey, ",") {
+			if k = strings.TrimSpace(k); k != "" {
+				recipientKeys = append(recipientKeys, k)
 			}
 		}
-	} else if userKey == "" {
-		errs = append(errs, "user key is required")
+		switch {
+		case len(recipientKeys) == 0:
+			errs = append(errs, "user key is required")
+		case len(recipientKeys) > maxRecipients:
+			errs = append(errs, "user must be a comma-separated list of 50 or fewer recipient keys")
+		default:
+			for _, k := range recipientKeys {
+				if !userKeyRe.MatchString(k) {
+					errs = append(errs, "user key is invalid")
+					break
+				}
+			}
+		}
 	}
 
 	if message == "" {
@@ -218,6 +236,16 @@ func (a *Accounts) messagesHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// --- Resolve recipients (single store lookup path) --------------------
+	// Done after validation so a key matching no user and no group yields 404
+	// ("not found"), separate from the 400 validation errors above. A user_key
+	// contributes one recipient; a group_key contributes its members.
+	recipientIDs, rerr := a.repos.Sends.ResolveRecipients(r.Context(), recipientKeys)
+	if rerr != nil {
+		writeRequestErrors(w, http.StatusNotFound, requestID, "user key is invalid")
+		return
+	}
+
 	// --- Assemble the send row ---------------------------------------------
 	// sound: unknown/custom values are ACCEPT-AND-STORE. Pushover falls back
 	// to its default sound for user-uploaded/unknown sounds, so we do NOT
@@ -245,10 +273,15 @@ func (a *Accounts) messagesHandler(w http.ResponseWriter, r *http.Request) {
 		CallbackURL:  callback,
 		CreatedAt:    now,
 	}
-	msg := store.Message{
-		RecipientUserID: recipientUserID,
-		DeviceFilter:    device,
-		CreatedAt:       now,
+	// One per-recipient message row per resolved recipient (H1 fan-out). The
+	// device filter applies uniformly to every recipient in this send.
+	msgs := make([]store.Message, 0, len(recipientIDs))
+	for _, rid := range recipientIDs {
+		msgs = append(msgs, store.Message{
+			RecipientUserID: rid,
+			DeviceFilter:    device,
+			CreatedAt:       now,
+		})
 	}
 
 	// priority=2: create a pending receipt placeholder (30-char id) matching
@@ -268,7 +301,7 @@ func (a *Accounts) messagesHandler(w http.ResponseWriter, r *http.Request) {
 
 	if _, err := a.repos.Ingests.Ingest(r.Context(), &store.IngestInput{
 		Send:       send,
-		Messages:   []store.Message{msg},
+		Messages:   msgs,
 		Receipt:    receipt,
 		Attachment: attachment,
 	}); err != nil {
@@ -277,14 +310,16 @@ func (a *Accounts) messagesHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// --- Quota: consume on accepted send, then attach the live headers -----
-	// MarkSendAccepted does not enforce the limit (todo 10 adds the 429 gate);
-	// a failure to record is logged but does not fail an otherwise-accepted
-	// send. SetLimitHeaders overwrites the placeholder headers limitWrap wrote
-	// from the (body-resolved) caller, so X-Limit-App-Remaining reflects this
-	// send.
-	if _, err := a.MarkSendAccepted(r.Context(), senderUserID); err != nil {
-		a.logger.Error("messages.json: mark send accepted", "err", err)
+	// --- Quota: 1 per recipient, then attach the live headers --------------
+	// The fan-out charges one quota unit per CONCRETE recipient, not per key:
+	// a group key with N members costs N. A single Increment by the recipient
+	// count keeps the counter and X-Limit-App-Remaining consistent. This does
+	// not enforce the limit (todo 10 adds the 429 gate); a failure to record is
+	// logged but does not fail an otherwise-accepted send.
+	if n := len(recipientIDs); n > 0 {
+		if _, err := a.repos.Quota.Increment(r.Context(), senderUserID, quotaPeriod(time.Now()), int64(n)); err != nil {
+			a.logger.Error("messages.json: charge quota", "recipients", n, "err", err)
+		}
 	}
 	a.SetLimitHeaders(w, senderUserID)
 

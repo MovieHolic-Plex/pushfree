@@ -102,6 +102,7 @@ type Store struct {
 	timrs *TimerRepo
 	cbs   *CallbackRepo
 	ing   *IngestRepo
+	grps  *GroupRepo
 }
 
 // Open opens (and migrates) the database and returns a fully wired Store.
@@ -129,6 +130,7 @@ func NewStore(db *sql.DB) *Store {
 		timrs: &TimerRepo{db: db},
 		cbs:   &CallbackRepo{db: db},
 		ing:   &IngestRepo{db: db},
+		grps:  &GroupRepo{db: db},
 	}
 }
 
@@ -152,6 +154,7 @@ func (s *Store) Repos() store.Repos {
 		Timers:      s.timrs,
 		Callbacks:   s.cbs,
 		Ingests:     s.ing,
+		Groups:      s.grps,
 	}
 }
 

@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -55,6 +56,62 @@ func (r *SendRepo) CreateFanout(ctx context.Context, f *store.Fanout) (int64, er
 func (r *SendRepo) GetByID(ctx context.Context, id int64) (store.Send, error) {
 	row := r.db.QueryRowContext(ctx, `SELECT `+sendCols+` FROM sends WHERE id = ?`, id)
 	return scanSend(row)
+}
+
+// ResolveRecipients is the SINGLE send-time lookup path for the "user" field
+// (todo 9): it expands a list of 30-char keys into concrete recipient user
+// IDs, resolving each key as a user_key first and a group_key second. The
+// caller cannot tell the two key kinds apart, so this method is the only place
+// that decides.
+//
+//   - A key matching a users.user_key row contributes that one user id.
+//   - A key matching a groups.group_key row contributes every member user id.
+//   - A key matching NEITHER returns ErrNotFound (the API maps this to 404).
+//
+// A group with zero members contributes nothing but is NOT an error (the key
+// resolved to a known group); the overall result may then be empty.
+func (r *SendRepo) ResolveRecipients(ctx context.Context, keys []string) ([]int64, error) {
+	var ids []int64
+	for _, key := range keys {
+		// Try a user first: the overwhelmingly common case, and a single-row
+		// lookup that avoids touching group_members at all.
+		var userID int64
+		err := r.db.QueryRowContext(ctx, `SELECT id FROM users WHERE user_key = ?`, key).Scan(&userID)
+		if err == nil {
+			ids = append(ids, userID)
+			continue
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return nil, mapErr(err)
+		}
+		// Not a user. Resolve as a group, expanding its members.
+		var groupID int64
+		err = r.db.QueryRowContext(ctx, `SELECT id FROM groups WHERE group_key = ?`, key).Scan(&groupID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, store.ErrNotFound
+		}
+		if err != nil {
+			return nil, mapErr(err)
+		}
+		rows, qerr := r.db.QueryContext(ctx,
+			`SELECT user_id FROM group_members WHERE group_id = ? ORDER BY user_id ASC`, groupID)
+		if qerr != nil {
+			return nil, mapErr(qerr)
+		}
+		for rows.Next() {
+			var uid int64
+			if serr := rows.Scan(&uid); serr != nil {
+				rows.Close()
+				return nil, mapErr(serr)
+			}
+			ids = append(ids, uid)
+		}
+		rows.Close()
+		if rerr := rows.Err(); rerr != nil {
+			return nil, mapErr(rerr)
+		}
+	}
+	return ids, nil
 }
 
 // sendCols is the canonical send column list + scan order.
