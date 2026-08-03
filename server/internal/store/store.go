@@ -317,6 +317,17 @@ type AttachmentRepo interface {
 	GetBySendID(ctx context.Context, sendID int64) (Attachment, error)
 }
 
+// ReceiptSweepResult reports how many rows each table lost in one receipt
+// GC pass (todo 23). Receipts is the count of receipt rows deleted; the other
+// fields are the dependent rows (timers/callbacks/dlq) that referenced them
+// and were removed in the same transaction to satisfy the receipts FK.
+type ReceiptSweepResult struct {
+	Receipts  int64
+	Timers    int64
+	Callbacks int64
+	DLQ       int64
+}
+
 // ReceiptRepo covers the priority-2 lifecycle record.
 type ReceiptRepo interface {
 	Create(ctx context.Context, r *Receipt) error
@@ -327,6 +338,28 @@ type ReceiptRepo interface {
 	// pending->delivered state transition is owned by todo 23; this method
 	// is the narrow write the hub's default DeliveryHook needs (todo 13).
 	MarkLastDelivered(ctx context.Context, receiptID string, at time.Time) error
+
+	// Acknowledge atomically transitions a pending/delivered receipt to the
+	// acknowledged terminal state, recording who/when (todo 23). It is
+	// idempotent: an already-acknowledged receipt is left untouched (the
+	// original acknowledged_at/_by/_by_device are preserved) and returns nil.
+	// Acknowledging an expired/canceled receipt is an illegal forward
+	// transition and is a no-op returning nil, so the HTTP ack endpoint treats
+	// a race with expiry/cancel as success rather than an error. Stopping
+	// retries is implied: the scheduler (todo 21) observes the terminal state
+	// and emits EventDone, so no retry timer is re-armed.
+	Acknowledge(ctx context.Context, id, acknowledgedBy, acknowledgedByDevice string, at time.Time) error
+
+	// SweepReceipts garbage-collects receipts whose retention window has
+	// elapsed (default 7 days, the Pushover receipt query window), cascading
+	// the delete to dependent timers, callbacks and callback-DLQ rows (todo
+	// 23). A receipt is eligible when it is terminal
+	// (acknowledged/expired/canceled) AND its terminal timestamp is older
+	// than now-retention, OR when it is still pending/delivered but past
+	// expires_at+retention (an unacked emergency whose scheduler-driven
+	// expiry has not been recorded). now is injectable so the boundary is
+	// tested without sleeping. Returns per-table delete counts.
+	SweepReceipts(ctx context.Context, now time.Time, retention time.Duration) (ReceiptSweepResult, error)
 }
 
 // QuotaRepo covers the monthly send counter.

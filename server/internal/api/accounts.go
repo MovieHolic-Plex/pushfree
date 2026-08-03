@@ -22,6 +22,7 @@ type Accounts struct {
 	authSecret []byte
 	ttl        time.Duration
 	logger     *slog.Logger
+	ackHook    AckHook // nil until todo 25's callback worker is wired (SetAckHook)
 }
 
 // New builds an Accounts handler group. authSecret signs stateless session
@@ -67,6 +68,13 @@ func (a *Accounts) Register(mux *http.ServeMux) {
 	// path; neither consumes quota.
 	mux.HandleFunc("POST /1/users/validate.json", a.limitWrap(a.validateHandler))
 	mux.HandleFunc("GET /1/sounds.json", a.limitWrap(a.soundsHandler))
+
+	// Receipt lifecycle (todo 23). GET polls the A1 receipt snapshot;
+	// acknowledge.json flips a receipt to acknowledged via the recipient's
+	// device secret OR the owning app token. Both are /1/* routes so limitWrap
+	// attaches the X-Limit-App-* header convention (neither consumes quota).
+	mux.HandleFunc("GET /1/receipts/{receipt}", a.limitWrap(a.receiptHandler))
+	mux.HandleFunc("POST /1/receipts/{receipt}/acknowledge.json", a.limitWrap(a.ackHandler))
 
 	// Monthly quota usage endpoint (todo 10). Read-only, app-token auth via
 	// the ?token= query; returns {count,limit,remaining,reset} for the token
