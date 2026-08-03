@@ -1,0 +1,14 @@
+# pnpm 11+ reads its settings from this file (the `pnpm` field in
+# package.json is no longer honored). Settings only -- this is a single
+# package, not a multi-package workspace.
+#
+# sharp is an optional dependency of next.js, used only by its built-in image
+# optimizer. This dashboard is a static export with images.unoptimized, so
+# sharp is never loaded at runtime. We explicitly decline its native
+# postinstall (allowBuilds.sharp: false) so pnpm treats it as acknowledged
+# rather than emitting ERR_PNPM_IGNORED_BUILDS -- which next build's internal
+# `pnpm install` deps-check turns into a hard failure in non-TTY (CI) mode.
+# pnpm may re-insert this key as a "set this to true or false" placeholder on
+# install; keep it pinned to false.
+allowBuilds:
+  sharp: false
