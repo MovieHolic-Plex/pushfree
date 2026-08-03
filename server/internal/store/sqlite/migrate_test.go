@@ -29,8 +29,8 @@ func TestMigrationsUpDownUp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Version after Up #1: %v", err)
 	}
-	if v != 3 {
-		t.Fatalf("version after Up #1 = %d, want 3", v)
+	if v != 4 {
+		t.Fatalf("version after Up #1 = %d, want 4", v)
 	}
 	for _, tbl := range wantTables {
 		if !tableExists(t, s, tbl) {
@@ -72,8 +72,8 @@ func TestMigrationsUpDownUp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Version after Up #2: %v", err)
 	}
-	if v != 3 {
-		t.Fatalf("version after Up #2 = %d, want 3", v)
+	if v != 4 {
+		t.Fatalf("version after Up #2 = %d, want 4", v)
 	}
 	for _, tbl := range wantTables {
 		if !tableExists(t, s, tbl) {
