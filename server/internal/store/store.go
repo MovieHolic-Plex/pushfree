@@ -380,19 +380,69 @@ type GroupRepo interface {
 	ListMemberKeys(ctx context.Context, groupID int64) ([]string, error)
 }
 
+// Subscription is a discoverable "subscribe to my app" channel owned by an
+// app (todo 12). SubscriptionCode is exactly 30 chars [A-Za-z0-9]. Title is
+// the human-readable channel name (may be "").
+type Subscription struct {
+	ID               int64
+	AppID            int64
+	OwnerUserID      int64
+	SubscriptionCode string // exactly 30 chars
+	Title            string
+	CreatedAt        time.Time
+}
+
+// SubscriptionKey is one approved per-(app, user) dynamic key (todo 12). The
+// (AppID, UserID) pair is unique so approval is stable: re-approving the same
+// app+user returns the same key. SubscribedKey resolves to UserID in the send
+// path (ResolveRecipients), behaving exactly like a user_key (same 30-char
+// [A-Za-z0-9] format).
+type SubscriptionKey struct {
+	ID             int64
+	SubscriptionID int64
+	AppID          int64
+	UserID         int64
+	SubscribedKey  string // exactly 30 chars
+	CreatedAt      time.Time
+}
+
+// SubscriptionRepo covers the subscription-code + dynamic-key lifecycle (todo
+// 12). Member identities cross the boundary as user_ids; the API layer
+// resolves user_key <-> user_id.
+type SubscriptionRepo interface {
+	Create(ctx context.Context, s *Subscription) (int64, error)
+	// GetByCode returns the subscription with the given subscription_code.
+	// Used by the authorize and migrate paths; returns ErrNotFound if absent.
+	GetByCode(ctx context.Context, code string) (Subscription, error)
+	// Approve mints (or returns, if (appID, userID) already exists) the
+	// per-app+user dynamic key for the subscription. It is idempotent and
+	// stable: re-approving the same app+user returns the SAME key. The key is
+	// different per app. appID is the app the subscription currently belongs
+	// to (the owner may migrate it later).
+	Approve(ctx context.Context, subscriptionID, appID, userID int64) (SubscriptionKey, error)
+	// Migrate re-parents a subscription from fromAppID to toAppID and
+	// regenerates every subscriber key for that subscription (old keys
+	// invalidated, new keys minted for toAppID), preserving each user_id. It
+	// returns the count of remapped keys, or ErrNotFound if the subscription
+	// is absent or not currently parented on fromAppID. The caller must have
+	// validated ownership of both apps.
+	Migrate(ctx context.Context, subscriptionID, fromAppID, toAppID int64) (int, error)
+}
+
 // Repos bundles every repository interface. Concrete implementations
 // (sqlite, later postgres) produce one of these.
 type Repos struct {
-	Users       UserRepo
-	Apps        AppRepo
-	Devices     DeviceRepo
-	Sends       SendRepo
-	Messages    MessageRepo
-	Attachments AttachmentRepo
-	Receipts    ReceiptRepo
-	Quota       QuotaRepo
-	Timers      TimerRepo
-	Callbacks   CallbackRepo
-	Ingests     IngestRepo
-	Groups      GroupRepo
+	Users         UserRepo
+	Apps          AppRepo
+	Devices       DeviceRepo
+	Sends         SendRepo
+	Messages      MessageRepo
+	Attachments   AttachmentRepo
+	Receipts      ReceiptRepo
+	Quota         QuotaRepo
+	Timers        TimerRepo
+	Callbacks     CallbackRepo
+	Ingests       IngestRepo
+	Groups        GroupRepo
+	Subscriptions SubscriptionRepo
 }

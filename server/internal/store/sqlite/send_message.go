@@ -66,7 +66,11 @@ func (r *SendRepo) GetByID(ctx context.Context, id int64) (store.Send, error) {
 //
 //   - A key matching a users.user_key row contributes that one user id.
 //   - A key matching a groups.group_key row contributes every member user id.
-//   - A key matching NEITHER returns ErrNotFound (the API maps this to 404).
+//   - A key matching a subscription_keys.subscribed_key row (todo 12: a
+//     per-(app, user) dynamic subscriber key) contributes its underlying
+//     user id, transparently like a user_key.
+//   - A key matching NONE of the above returns ErrNotFound (the API maps this
+//     to 404).
 //
 // A group with zero members contributes nothing but is NOT an error (the key
 // resolved to a known group); the overall result may then be empty.
@@ -88,7 +92,20 @@ func (r *SendRepo) ResolveRecipients(ctx context.Context, keys []string) ([]int6
 		var groupID int64
 		err = r.db.QueryRowContext(ctx, `SELECT id FROM groups WHERE group_key = ?`, key).Scan(&groupID)
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, store.ErrNotFound
+			// Not a group either. Try a dynamic subscriber key (todo 12): a
+			// subscription approval mints a per-(app, user) key that resolves
+			// to its underlying user_id, behaving like a user_key.
+			var subUserID int64
+			serr := r.db.QueryRowContext(ctx,
+				`SELECT user_id FROM subscription_keys WHERE subscribed_key = ?`, key).Scan(&subUserID)
+			if serr == nil {
+				ids = append(ids, subUserID)
+				continue
+			}
+			if errors.Is(serr, sql.ErrNoRows) {
+				return nil, store.ErrNotFound
+			}
+			return nil, mapErr(serr)
 		}
 		if err != nil {
 			return nil, mapErr(err)

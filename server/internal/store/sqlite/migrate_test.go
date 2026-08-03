@@ -18,6 +18,7 @@ func TestMigrationsUpDownUp(t *testing.T) {
 		"users", "apps", "devices", "sends", "messages", "attachments",
 		"receipts", "quota_counters", "timers", "callbacks", "dlq",
 		"groups", "group_members",
+		"subscriptions", "subscription_keys",
 	}
 
 	// Up on a fresh DB applies every migration and creates every table.
@@ -28,8 +29,8 @@ func TestMigrationsUpDownUp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Version after Up #1: %v", err)
 	}
-	if v != 2 {
-		t.Fatalf("version after Up #1 = %d, want 2", v)
+	if v != 3 {
+		t.Fatalf("version after Up #1 = %d, want 3", v)
 	}
 	for _, tbl := range wantTables {
 		if !tableExists(t, s, tbl) {
@@ -71,8 +72,8 @@ func TestMigrationsUpDownUp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Version after Up #2: %v", err)
 	}
-	if v != 2 {
-		t.Fatalf("version after Up #2 = %d, want 2", v)
+	if v != 3 {
+		t.Fatalf("version after Up #2 = %d, want 3", v)
 	}
 	for _, tbl := range wantTables {
 		if !tableExists(t, s, tbl) {

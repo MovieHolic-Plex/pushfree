@@ -103,6 +103,7 @@ type Store struct {
 	cbs   *CallbackRepo
 	ing   *IngestRepo
 	grps  *GroupRepo
+	subs  *SubscriptionRepo
 }
 
 // Open opens (and migrates) the database and returns a fully wired Store.
@@ -131,6 +132,7 @@ func NewStore(db *sql.DB) *Store {
 		cbs:   &CallbackRepo{db: db},
 		ing:   &IngestRepo{db: db},
 		grps:  &GroupRepo{db: db},
+		subs:  &SubscriptionRepo{db: db},
 	}
 }
 
@@ -143,18 +145,19 @@ func (s *Store) Close() error { return s.db.Close() }
 // Repos returns the store.Repos bundle of interfaces.
 func (s *Store) Repos() store.Repos {
 	return store.Repos{
-		Users:       s.users,
-		Apps:        s.apps,
-		Devices:     s.devs,
-		Sends:       s.sends,
-		Messages:    s.msgs,
-		Attachments: s.atts,
-		Receipts:    s.rcpts,
-		Quota:       s.quota,
-		Timers:      s.timrs,
-		Callbacks:   s.cbs,
-		Ingests:     s.ing,
-		Groups:      s.grps,
+		Users:         s.users,
+		Apps:          s.apps,
+		Devices:       s.devs,
+		Sends:         s.sends,
+		Messages:      s.msgs,
+		Attachments:   s.atts,
+		Receipts:      s.rcpts,
+		Quota:         s.quota,
+		Timers:        s.timrs,
+		Callbacks:     s.cbs,
+		Ingests:       s.ing,
+		Groups:        s.grps,
+		Subscriptions: s.subs,
 	}
 }
 
