@@ -1,0 +1,77 @@
+# Desktop (Tauri 2) cross-OS build matrix (todo 47).
+#
+# Runs cargo build/test/clippy on macOS and Ubuntu -- the non-Windows
+# runners. The Windows leg is intentionally NOT in this matrix:
+# the Tauri bundler needs the WebView2 runtime which is unavailable in
+# GitHub-hosted Ubuntu images and not reliable for a full `tauri build` in
+# CI. The Windows compile path is instead verified locally on the dev box
+# via `cargo build` (desktop/), which exercises the full Rust+tauri-build
+# compile without producing the final installer.
+#
+# Full Tauri bundling (.msi/.exe, .dmg, .deb/.AppImage) is a local or
+# release-time step, not part of this CI matrix.
+name: desktop
+
+on:
+  push:
+    paths:
+      - 'desktop/**'
+      - '.github/workflows/desktop.yml'
+  pull_request:
+    paths:
+      - 'desktop/**'
+      - '.github/workflows/desktop.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust (stable + clippy)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      # Tauri 2 on Linux links against webkit2gtk; these are the build-time
+      # dev headers required for `cargo build` to link the desktop crate.
+      - name: Install Linux system dependencies (Tauri)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - name: Cache cargo
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: desktop
+
+      - name: Cargo build
+        run: cargo build --locked
+
+      - name: Cargo test
+        run: cargo test --locked
+
+      - name: Cargo clippy
+        run: cargo clippy --locked -- -D warnings

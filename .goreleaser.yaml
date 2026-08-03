@@ -1,0 +1,74 @@
+# GoReleaser config for the pushfree server.
+#
+# The server is pure-Go (SQLite via modernc.org/sqlite, no cgo), so every
+# target cross-compiles with CGO_ENABLED=0 into a single static binary.
+#
+# Build matrix (matches the GoReleaser release spec, todo 47):
+#   linux/amd64, linux/arm64, windows/amd64, darwin/arm64
+#
+# Validated locally on Windows with:
+#   GOOS=linux   GOARCH=arm64  CGO_ENABLED=0 go build ./cmd/pushfree
+#   GOOS=darwin  GOARCH=arm64  CGO_ENABLED=0 go build ./cmd/pushfree
+#   GOOS=windows GOARCH=amd64  CGO_ENABLED=0 go build ./cmd/pushfree
+#   GOOS=linux   GOARCH=amd64  CGO_ENABLED=0 go build ./cmd/pushfree
+version: 2
+
+project_name: pushfree
+
+builds:
+  - id: pushfree
+    # Module root; `main` is resolved relative to this directory.
+    dir: server
+    main: ./cmd/pushfree
+    binary: pushfree
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - windows
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    # Narrow the full cross-product down to the supported release targets:
+    # windows is amd64-only, darwin is arm64-only (Apple Silicon).
+    ignore:
+      - goos: windows
+        goarch: arm64
+      - goos: darwin
+        goarch: amd64
+    # Reproducible artifact mtimes keyed to the commit timestamp.
+    mod_timestamp: '{{ .CommitTimestamp }}'
+
+archives:
+  - id: default
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else }}{{ .Arch }}
+      {{- end }}
+    format: tar.gz
+    format_overrides:
+      - goos: windows
+        format: zip
+
+checksum:
+  name_template: 'checksums.txt'
+
+snapshot:
+  version_template: '{{ incpatch .Version }}-next'
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^chore:'
+
+release:
+  draft: false
+  prerelease: auto
+  name_template: 'pushfree {{ .Version }}'
