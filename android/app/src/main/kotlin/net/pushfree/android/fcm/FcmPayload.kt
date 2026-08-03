@@ -1,5 +1,9 @@
 package net.pushfree.android.fcm
 
+import net.pushfree.android.data.AckState
+import net.pushfree.android.data.MessageEntity
+import net.pushfree.android.e2ee.E2ee
+
 /**
  * A parsed pushfree FCM data-only message. Field keys mirror the `/1/ws` frame
  * (todo 13, `WsProtocol`) so a message looks identical regardless of transport:
@@ -65,5 +69,31 @@ fun parseFcmPayload(data: Map<String, String>): FcmPayload? {
         receiptId = receiptId,
         attachmentUri = attachmentUri,
         encrypted = encrypted,
+    )
+}
+
+/**
+ * Map a parsed [FcmPayload] onto a Room [MessageEntity] attributed to [sub].
+ * When [hexKey] is supplied and [FcmPayload.encrypted] is true, the title/body
+ * are decrypted before storage (todo 44); any failure yields a placeholder so
+ * ciphertext never reaches the UI. `hexKey` defaults to null so existing
+ * non-encrypted tests compile unchanged.
+ *
+ * Lives in `src/main` (not the play source set) because it is a pure mapping
+ * with no Firebase dependency, so the shared unit tests
+ * (src/test/.../fcm/FcmPayloadTest) compile for BOTH flavors.
+ */
+internal fun FcmPayload.toMessageEntity(sub: String, hexKey: String? = null): MessageEntity {
+    val (title, body) = E2ee.decryptTitleBody(title, body, encrypted, hexKey)
+    return MessageEntity(
+        id = id,
+        sub = sub,
+        sendId = sendId,
+        title = title,
+        body = body,
+        priority = priority,
+        attachmentUri = attachmentUri,
+        ackState = if (receiptId != null) AckState.PENDING else AckState.NONE,
+        receiptId = receiptId,
     )
 }

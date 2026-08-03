@@ -9,9 +9,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
-import net.pushfree.android.data.AckState
 import net.pushfree.android.data.MessageEntity
-import net.pushfree.android.e2ee.E2ee
 import net.pushfree.android.e2ee.SharedPrefsE2eeKeyStore
 import net.pushfree.android.notifications.Notifications
 import net.pushfree.android.notifications.PushfreeNotificationBuilder
@@ -19,6 +17,12 @@ import net.pushfree.android.outbox.AckOutboxServices
 
 /**
  * Firebase Cloud Messaging service for the optional FCM transport (todo 30).
+ *
+ * PLAY FLAVOR ONLY (todo 49): this source set is `src/play`, so the class is
+ * compiled exclusively into the `play` variant. The `fdroid` variant has no
+ * Firebase dependency on its classpath and never references this type. The FCM
+ * `<service>` manifest entry that routes `com.google.firebase.MESSAGING_EVENT`
+ * to this class lives in `src/play/AndroidManifest.xml`.
  *
  * Receives data-only messages and persists them as [MessageEntity] rows (Room,
  * todo 28) through the same priority-notification pipeline as the WS transport.
@@ -111,26 +115,4 @@ class PushfreeFcmService : FirebaseMessagingService() {
     private companion object {
         const val TAG = "PushfreeFcmService"
     }
-}
-
-/**
- * Map a parsed [FcmPayload] onto a Room [MessageEntity] attributed to [sub].
- * When [hexKey] is supplied and [FcmPayload.encrypted] is true, the title/body
- * are decrypted before storage (todo 44); any failure yields a placeholder so
- * ciphertext never reaches the UI. `hexKey` defaults to null so existing
- * non-encrypted tests compile unchanged.
- */
-internal fun FcmPayload.toMessageEntity(sub: String, hexKey: String? = null): MessageEntity {
-    val (title, body) = E2ee.decryptTitleBody(title, body, encrypted, hexKey)
-    return MessageEntity(
-        id = id,
-        sub = sub,
-        sendId = sendId,
-        title = title,
-        body = body,
-        priority = priority,
-        attachmentUri = attachmentUri,
-        ackState = if (receiptId != null) AckState.PENDING else AckState.NONE,
-        receiptId = receiptId,
-    )
 }

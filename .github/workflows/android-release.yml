@@ -1,0 +1,136 @@
+name: Android Release (Play Store)
+
+# Tag-driven Play Store pipeline (todo 49). Builds the `play` flavor release
+# APK (signed with the release keystore from secrets when present) and invokes
+# the fastlane `supply` lane. The supply step is a SKELETON: by default it runs
+# in dry-run / metadata-validation mode (no Play credentials required). A real
+# upload requires the maintainer to add a Google Play service account JSON as a
+# repository secret AND to run with dry_run:false.
+
+# ---------------------------------------------------------------- Triggers
+#   push: tag android-v*   -> build play release, supply in DRY-RUN (validate).
+#   workflow_dispatch      -> opt-in real upload via the dry_run input.
+on:
+  push:
+    tags:
+      - "android-v*"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "false = real upload (needs Play service-account secret); true = validate only"
+        required: false
+        default: "true"
+
+permissions:
+  contents: read
+
+jobs:
+  play-release:
+    name: Assemble play release + supply (skeleton)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      # ------------------------------------------------------------- google-services.json
+      # Optional build-time input. Absent -> the `play` flavor still builds and
+      # FCM stays runtime-disabled (FirebaseApp never initializes). Present ->
+      # FCM activates for the play build. Never committed to the repo.
+      - name: Write google-services.json (optional)
+        env:
+          PLAY_GOOGLE_SERVICES_JSON: ${{ secrets.PLAY_GOOGLE_SERVICES_JSON }}
+        run: |
+          if [ -n "$PLAY_GOOGLE_SERVICES_JSON" ]; then
+            printf '%s' "$PLAY_GOOGLE_SERVICES_JSON" > app/google-services.json
+            echo "::notice::google-services.json present; FCM transport enabled for the play build."
+          else
+            echo "::notice::PLAY_GOOGLE_SERVICES_JSON not set; play flavor builds with FCM runtime-disabled."
+          fi
+
+      # ------------------------------------------------------------- release signing
+      # Decode the release keystore from a base64 secret when present. When ANY
+      # of the four PUSHFREE_KEYSTORE* env vars is unset, app/build.gradle.kts
+      # transparently falls back to the debug keystore so the build always
+      # produces an installable APK - but a debug-signed APK MUST NEVER be
+      # uploaded (the supply step would be meaningless). A real release sets
+      # all four secrets.
+      - name: Configure release signing (when keystore secret present)
+        env:
+          PUSHFREE_KEYSTORE_BASE64: ${{ secrets.PUSHFREE_KEYSTORE_BASE64 }}
+          PUSHFREE_KEYSTORE_PASSWORD: ${{ secrets.PUSHFREE_KEYSTORE_PASSWORD }}
+          PUSHFREE_KEY_ALIAS: ${{ secrets.PUSHFREE_KEY_ALIAS }}
+          PUSHFREE_KEY_PASSWORD: ${{ secrets.PUSHFREE_KEY_PASSWORD }}
+        run: |
+          if [ -n "$PUSHFREE_KEYSTORE_BASE64" ]; then
+            ks="$RUNNER_TEMP/pushfree.keystore"
+            printf '%s' "$PUSHFREE_KEYSTORE_BASE64" | base64 -d > "$ks"
+            {
+              echo "PUSHFREE_KEYSTORE=$ks"
+              echo "PUSHFREE_KEYSTORE_PASSWORD=$PUSHFREE_KEYSTORE_PASSWORD"
+              echo "PUSHFREE_KEY_ALIAS=$PUSHFREE_KEY_ALIAS"
+              echo "PUSHFREE_KEY_PASSWORD=$PUSHFREE_KEY_PASSWORD"
+            } >> "$GITHUB_ENV"
+            echo "::notice::Release keystore configured (production-signed build)."
+          else
+            echo "::notice::PUSHFREE_KEYSTORE_BASE64 not set; falling back to debug signing (NOT publishable)."
+          fi
+
+      - name: Assemble play release APK
+        run: ./gradlew --no-daemon assemblePlayRelease
+
+      - name: Locate built APK
+        run: |
+          ls -l app/build/outputs/apk/play/release/ || true
+          test -f app/build/outputs/apk/play/release/app-play-release.apk
+
+      # ------------------------------------------------------------- fastlane supply
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.2'
+
+      - name: Install fastlane
+        run: gem install fastlane --no-document
+
+      # Dry-run by default. Only an explicit workflow_dispatch with
+      # dry_run=false (AND the PLAY_CONFIG_JSON / SUPPLY_JSON_KEY* secret set)
+      # performs a real upload.
+      - name: supply (Play Store) - dry-run unless explicitly disabled
+        env:
+          PLAY_CONFIG_JSON: ${{ secrets.PLAY_CONFIG_JSON }}
+          SUPPLY_JSON_KEY: ${{ secrets.SUPPLY_JSON_KEY }}
+          SUPPLY_JSON_KEY_PATH: ${{ secrets.SUPPLY_JSON_KEY_PATH }}
+          SUPPLY_PACKAGE_NAME: ${{ secrets.PLAY_PACKAGE_NAME }}
+        run: |
+          dry_run="true"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ github.event.inputs.dry_run }}" = "false" ]; then
+            dry_run="false"
+          fi
+          if [ "$dry_run" = "false" ] && [ -z "$PLAY_CONFIG_JSON" ] && [ -z "$SUPPLY_JSON_KEY" ] && [ -z "$SUPPLY_JSON_KEY_PATH" ]; then
+            echo "::error::Real upload requested (dry_run:false) but no Play service-account secret (PLAY_CONFIG_JSON / SUPPLY_JSON_KEY / SUPPLY_JSON_KEY_PATH) is set. Aborting."
+            exit 1
+          fi
+          echo "Running fastlane supply (dry_run=$dry_run)"
+          fastlane android deploy_play dry_run:"$dry_run"
+
+      - name: Upload play release APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pushfree-play-release-apk
+          path: android/app/build/outputs/apk/play/release/app-play-release.apk
+          if-no-files-found: error

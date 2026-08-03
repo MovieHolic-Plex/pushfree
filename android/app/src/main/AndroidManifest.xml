@@ -55,34 +55,14 @@
             android:exported="false"
             android:foregroundServiceType="dataSync" />
 
-        <!-- Optional FCM transport (todo 30). Receives data-only messages and
-             routes them to the Room store + notification pipeline. Only active
-             when google-services.json was present at build time (FirebaseApp
-             initialized); absent that, the service is never started -> the
-             channel is runtime-disabled and the build still succeeds. -->
-        <service
-            android:name=".fcm.PushfreeFcmService"
-            android:exported="false">
-            <intent-filter>
-                <action android:name="com.google.firebase.MESSAGING_EVENT" />
-            </intent-filter>
-        </service>
-
-        <!-- UnifiedPush connector receiver (todo 31). A distributor app on the
-             device delivers pushes by broadcasting these actions; exported so
-             the distributor (a separate app) can reach it. When no distributor
-             is installed the transport stays disabled and WS remains primary
-             (UnifiedPushDistributor.isAvailable gate). -->
-        <receiver
-            android:name=".up.PushfreeUpReceiver"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="org.unifiedpush.android.connector.NEW_ENDPOINT" />
-                <action android:name="org.unifiedpush.android.connector.MESSAGE_RECEIVED" />
-                <action android:name="org.unifiedpush.android.connector.UNREGISTERED" />
-                <action android:name="org.unifiedpush.android.connector.REGISTERED" />
-            </intent-filter>
-        </receiver>
+        <!-- FCM service + UnifiedPush receiver live in FLAVOR-SPECIFIC
+             manifests (todo 49) so each transport is compiled/registered only
+             for the flavor that uses it:
+               src/play/AndroidManifest.xml   -> .fcm.PushfreeFcmService
+                 (Play flavor only; Firebase is a play-only dependency)
+               src/fdroid/AndroidManifest.xml -> .up.PushfreeUpReceiver
+                 (F-Droid flavor only; Google-free, UnifiedPush only)
+             The WS foreground service below is shared by both flavors. -->
     </application>
 
 </manifest>

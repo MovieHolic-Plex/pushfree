@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Play flavor manifest overlay (todo 49). Merged on top of
+     src/main/AndroidManifest.xml for the `play` variant ONLY. Registers the
+     FCM service so Firebase data messages reach the notification pipeline.
+     Firebase (firebase-messaging) is a play-only dependency; the fdroid variant
+     never merges this file and has no Firebase on its classpath. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application>
+        <service
+            android:name=".fcm.PushfreeFcmService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+    </application>
+
+</manifest>

@@ -50,10 +50,13 @@ jobs:
         uses: android-actions/setup-android@v3
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
-      - name: Assemble debug APK
-        run: ./gradlew assembleDebug
+      - name: Assemble debug APKs (both flavors)
+        run: ./gradlew assembleFdroidDebug assemblePlayDebug
       - name: Unit tests
-        run: ./gradlew testDebugUnitTest
+        # Shared src/test compiles for both flavors; running the fdroid
+        # variant's unit tests covers it. The play-only source set
+        # (PushfreeFcmService) has no dedicated tests (todo 49 flavors).
+        run: ./gradlew testFdroidDebugUnitTest
 
   rust:
     name: Rust (desktop)

@@ -80,6 +80,41 @@ android {
         }
     }
 
+    // ---- Product flavors (todo 49: Play Store pipeline) ----
+    // Two store-channel flavors share one Gradle project. The split mirrors
+    // the F-Droid purity rule and its inverse:
+    //   play   - Play Store build. Carries Firebase Cloud Messaging (Google)
+    //            and does NOT register the UnifiedPush receiver (the F-Droid
+    //            flavor is Google-free + UnifiedPush, so Play inverts that:
+    //            Google push, no UP). firebase-messaging is a PLAY-ONLY
+    //            dependency (playImplementation below); only the `play` source
+    //            set contains code that imports Firebase (PushfreeFcmService),
+    //            so the fdroid variant has ZERO Google artifacts on its
+    //            classpath. applicationId gets a ".play" suffix so the two
+    //            builds coexist on one device.
+    //   fdroid  - F-Droid / Google-free build. Registers the UnifiedPush
+    //            receiver (src/fdroid), no Firebase dependency.
+    // Both flavors build WITHOUT google-services.json: absent -> the play
+    // flavor still compiles (firebase-messaging is on its classpath) but the
+    // channel stays runtime-disabled (FirebaseApp never auto-initializes).
+    flavorDimensions += "store"
+    productFlavors {
+        create("play") {
+            dimension = "store"
+            applicationIdSuffix = ".play"
+            // play applicationId -> net.pushfree.android.play
+            // (the task spec named "com.pushfree.android.play"; the base
+            // applicationId is net.pushfree.android per todo 27 + the F-Droid
+            // metadata at metadata/net.pushfree.android.yml, so the suffix
+            // composes on that established base. See android/RELEASING.md.)
+        }
+        create("fdroid") {
+            dimension = "store"
+            // No suffix: applicationId stays net.pushfree.android, matching
+            // metadata/net.pushfree.android.yml (F-Droid listing).
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -135,13 +170,17 @@ dependencies {
     // WebSocket transport (todo 29): OkHttp provides the WS client + timeouts.
     implementation(libs.okhttp)
 
-    // Optional FCM transport (todo 30): firebase-messaging is always on the
-    // compile classpath so FirebaseMessagingService resolves; the channel is
-    // runtime-disabled when google-services.json is absent (FirebaseApp is not
-    // auto-initialized). The google-services plugin is applied conditionally
-    // at the end of this file so the build succeeds without that file.
-    implementation(platform(libs.firebase.bom))
-    implementation(libs.firebase.messaging)
+    // FCM transport (todo 30/49): Firebase is a PLAY-FLAVOR-ONLY dependency.
+    // The `play` flavor carries FCM (Google); the `fdroid` flavor is
+    // Google-free and uses UnifiedPush instead (see src/fdroid). Only the
+    // play source set contains code that imports Firebase
+    // (PushfreeFcmService), so the fdroid variant compiles with no Firebase
+    // on its classpath. The google-services plugin is applied conditionally
+    // at the end of this file (only when google-services.json is present) so
+    // the play flavor still builds with the channel runtime-disabled when
+    // that file is absent.
+    "playImplementation"(platform(libs.firebase.bom))
+    "playImplementation"(libs.firebase.messaging)
 
     testImplementation(libs.junit)
     testImplementation(libs.androidx.room.testing)
@@ -154,11 +193,14 @@ dependencies {
     testImplementation(libs.mockwebserver)
 }
 
-// FCM (todo 30): apply the google-services plugin ONLY when a config file is
-// present. Absent -> build still succeeds and the channel stays runtime-
-// disabled (FirebaseApp is not auto-initialized, so FirebaseMessagingService
-// is never invoked). Present -> the plugin emits FirebaseOptions resources so
-// the transport activates at runtime. The plugin block cannot itself be
+// FCM (todo 30/49): apply the google-services plugin ONLY when a config file
+// is present. The plugin is project-wide but only the `play` flavor uses
+// Firebase; in practice google-services.json is supplied exclusively for Play
+// builds, so the F-Droid/Google-free build (no file present) is unaffected.
+// Absent -> the play flavor still builds and the channel stays runtime-
+// disabled (FirebaseApp is not auto-initialized, so PushfreeFcmService is
+// never invoked). Present -> the plugin emits FirebaseOptions resources so
+// the transport activates at runtime. The plugins{} block cannot itself be
 // conditional, hence the post-block apply().
 if (file("google-services.json").exists()) {
     apply(plugin = "com.google.gms.google-services")

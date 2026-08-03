@@ -61,12 +61,12 @@ Builds:
     subdir: android
     # Plain Gradle build (the wrapper is used). No NDK, no special setup.
     gradle:
-      - yes
+      - assembleFdroidRelease
     # Output is a signed-by-debug-keystore APK when PUSHFREE_KEYSTORE* env
     # vars are absent (see android/RELEASING.md). F-Droid rebuilds unsigned
     # and signs with its own key, so the debug signature here is only a
     # convenience for local/CI verification, not the published signature.
-    output: app/build/outputs/apk/release/app-release.apk
+    output: app/build/outputs/apk/fdroid/release/app-fdroid-release.apk
     prebuild: []
 
 MaintainerNotes: |-
@@ -78,6 +78,11 @@ MaintainerNotes: |-
     - google-services.json is intentionally absent: the FCM transport is
       runtime-disabled and the build succeeds without it (no Google
       dependency required for the Google-free build).
+    - Flavors (todo 49): the F-Droid build uses the `fdroid` flavor
+      (assembleFdroidRelease -> app-fdroid-release.apk) which is Google-free +
+      UnifiedPush only. The `play` flavor (Play Store, FCM) is published via a
+      separate pipeline (.github/workflows/android-release.yml) and is NOT
+      built here.
 
 AutoUpdateMode: None
 UpdateCheckMode: None

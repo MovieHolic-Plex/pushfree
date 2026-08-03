@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- F-Droid flavor manifest overlay (todo 49). Merged on top of
+     src/main/AndroidManifest.xml for the `fdroid` variant ONLY. Registers the
+     UnifiedPush connector receiver so a distributor app can deliver pushes.
+     The `play` variant never merges this file: UnifiedPush is intentionally
+     absent from the Play build (F-Droid purity inverse). -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application>
+        <receiver
+            android:name=".up.PushfreeUpReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="org.unifiedpush.android.connector.NEW_ENDPOINT" />
+                <action android:name="org.unifiedpush.android.connector.MESSAGE_RECEIVED" />
+                <action android:name="org.unifiedpush.android.connector.UNREGISTERED" />
+                <action android:name="org.unifiedpush.android.connector.REGISTERED" />
+            </intent-filter>
+        </receiver>
+    </application>
+
+</manifest>

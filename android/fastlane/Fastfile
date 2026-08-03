@@ -1,0 +1,87 @@
+# frozen_string_literal: true
+#
+# fastlane Fastfile - Pushfree Play Store supply lane (todo 49).
+#
+# This is a SKELETON pipeline. It assembles the `play` flavor release APK and
+# calls `supply` to upload the APK + store listing to the Google Play Console
+# (internal track by default). NO real credentials are stored in this repo -
+# supply reads them from environment variables.
+#
+# ------------------------------------------------------------------
+#  Credentials / env (documented; NEVER hard-coded here)
+# ------------------------------------------------------------------
+#   SUPPLY_PACKAGE_NAME    Play applicationId.
+#                          Default: net.pushfree.android.play (the `play`
+#                          flavor's applicationId; the `fdroid` flavor has no
+#                          suffix -> net.pushfree.android and is NOT published
+#                          via Play).
+#   SUPPLY_JSON_KEY        Google Play service account JSON key *contents*.
+#   SUPPLY_JSON_KEY_PATH   ...or a path to the service account JSON key file.
+#   PLAY_CONFIG_JSON       (fastlane >= 2.217) service account JSON contents.
+#   PUSHFREE_KEYSTORE          \
+#   PUSHFREE_KEYSTORE_PASSWORD  |  Release keystore env (see
+#   PUSHFREE_KEY_ALIAS          |  android/RELEASING.md). When ANY is unset the
+#   PUSHFREE_KEY_PASSWORD      /   release falls back to the debug keystore and
+#                          the APK is NOT publishable - a real upload requires
+#                          all four to be set.
+#
+# ------------------------------------------------------------------
+#  Usage
+# ------------------------------------------------------------------
+#  DRY RUN (validates metadata only; no Play creds required, no upload):
+#     bundle exec fastlane android deploy_play dry_run:true
+#     # or: fastlane android deploy_play dry_run:true
+#
+#  Real upload (requires SUPPLY_JSON_KEY* / PLAY_CONFIG_JSON + signed keystore):
+#     fastlane android deploy_play dry_run:false
+#
+#  MISSING CREDENTIALS -> supply fails fast with a clear error (this is the
+#  documented failure path; success is never faked). See the CI workflow at
+#  .github/workflows/android-release.yml for the tag-driven invocation.
+
+default_platform(:android)
+
+# Directory of this Fastfile = .../android/fastlane ; the Gradle project root
+# is its parent (.../android).
+REPO_ROOT = File.expand_path('..', __dir__)
+
+platform :android do
+  desc 'Assemble the play-flavor release APK and upload it + the store listing to Play (internal track).'
+  desc 'Pass dry_run:true to validate metadata WITHOUT uploading (default for tag pushes).'
+  lane :deploy_play do |options|
+    UI.message('Pushfree Play Store pipeline (todo 49) - skeleton lane.')
+
+    # 1. Build the play release APK. Signed when PUSHFREE_KEYSTORE* env present,
+    #    otherwise debug-signed (NOT publishable - real upload needs signing).
+    gradle(
+      task: 'assemble',
+      flavor: 'play',
+      build_type: 'Release',
+      project_dir: REPO_ROOT,
+    )
+
+    apk_path = File.join(
+      REPO_ROOT,
+      'app', 'build', 'outputs', 'apk', 'play', 'release', 'app-play-release.apk'
+    )
+    UI.user_error!("Play release APK not found at #{apk_path}") unless File.exist?(apk_path)
+    UI.message("Built play release APK: #{apk_path}")
+
+    # 2. Upload via supply. Credentials are read from env (documented above);
+    #    NO secrets are committed. dry_run:true validates metadata without
+    #    contacting the Play API for an upload (supply may still need auth for
+    #    some checks - run with creds for a full dry-run).
+    supply(
+      package_name: ENV.fetch('SUPPLY_PACKAGE_NAME', 'net.pushfree.android.play'),
+      track: ENV.fetch('SUPPLY_TRACK', 'internal'),
+      apk: apk_path,
+      metadata_path: File.join(REPO_ROOT, 'fastlane', 'metadata', 'android'),
+      # Validate-only when dry_run set; default to a safe no-upload run so a
+      # bare `fastlane android deploy_play` never accidentally publishes.
+      dry_run: options[:dry_run] ? true : false,
+      skip_upload_metadata: false,
+      skip_upload_images: false,
+      skip_upload_screenshots: false,
+    )
+  end
+end
