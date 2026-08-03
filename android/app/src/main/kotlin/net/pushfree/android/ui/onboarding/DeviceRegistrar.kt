@@ -10,7 +10,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
-import okhttp3.toHttpUrlOrNull
+import java.net.URI
 import org.json.JSONObject
 import java.io.IOException
 import java.util.concurrent.TimeUnit
@@ -144,12 +144,16 @@ class OkHttpDeviceRegistrar(
                 trimmed.startsWith("http://") || trimmed.startsWith("https://") -> trimmed
                 else -> "https://$trimmed"
             }
-            val url = withScheme.toHttpUrlOrNull() ?: return null
-            if (url.scheme != "http" && url.scheme != "https") return null
-            if (url.encodedPath.isNotEmpty() && url.encodedPath != "/") return null
-            val defaultPort = if (url.scheme == "https") 443 else 80
-            val portSuffix = if (url.port == defaultPort) "" else ":${url.port}"
-            return "${url.scheme}://${url.host}$portSuffix"
+            val uri = runCatching { URI(withScheme) }.getOrNull() ?: return null
+            val scheme = uri.scheme?.lowercase()
+            if (scheme != "http" && scheme != "https") return null
+            val host = uri.host ?: return null
+            if (host.isEmpty()) return null
+            val path = uri.rawPath ?: ""
+            if (path.isNotEmpty() && path != "/") return null
+            val defaultPort = if (scheme == "https") 443 else 80
+            val portSuffix = if (uri.port == -1 || uri.port == defaultPort) "" else ":${uri.port}"
+            return "$scheme://$host$portSuffix"
         }
 
         private fun statusIsOne(body: String): Boolean =
