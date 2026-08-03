@@ -1,0 +1,95 @@
+---
+# Dual-database CI for the pushfree server (todo 45).
+#
+# Two independent lanes:
+#   sqlite   - the default embedded store (modernc.org/sqlite), no service.
+#   postgres - the pgx-backed store, exercised against a real Postgres
+#              instance via a GitHub Actions services container.
+#
+# They are split into two jobs (not a single matrix with a job-level service)
+# so a flaky/unhealthy Postgres container cannot fail the sqlite lane before it
+# runs. Each lane runs the same `go test` command; the postgres lane exports
+# PUSHFREE_TEST_PG_DSN so the testcontainers-gated suite connects to the
+# services container directly (no Docker-in-Docker needed in CI). With the env
+# unset (sqlite lane) the postgres subtests SKIP gracefully -- never faked.
+#
+# This file is intentionally separate from ci.yml (todo 2) and from any release
+# workflow (todo 47) so the three owners do not collide on the same file.
+name: server-db
+
+"on":
+  push:
+    paths:
+      - 'server/**'
+      - '.github/workflows/server-db.yml'
+  pull_request:
+    paths:
+      - 'server/**'
+      - '.github/workflows/server-db.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  sqlite:
+    name: Go store/api (sqlite)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: true
+      - name: Build
+        run: go build ./...
+      - name: Vet
+        run: go vet ./...
+      - name: Test (sqlite; postgres subtests skip)
+        # PUSHFREE_TEST_PG_DSN is unset here, so the postgres suite skips and
+        # only the sqlite + api paths run. This is the unchanged sqlite path.
+        run: go test ./internal/store/... ./internal/api/... -count=1
+
+  postgres:
+    name: Go store/api (postgres)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: pushfree
+          POSTGRES_PASSWORD: pushfree
+          POSTGRES_DB: pushfree_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pushfree -d pushfree_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      # The services container is exposed on localhost:5432 of the runner.
+      PUSHFREE_TEST_PG_DSN: postgres://pushfree:pushfree@localhost:5432/pushfree_test?sslmode=disable
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: true
+      - name: Build
+        run: go build ./...
+      - name: Vet
+        run: go vet ./...
+      - name: Test (postgres via services container; sqlite also runs)
+        # With PUSHFREE_TEST_PG_DSN set, the postgres suite runs against the
+        # services container (no testcontainers spin-up). sqlite + api run too.
+        run: go test ./internal/store/... ./internal/api/... -count=1
