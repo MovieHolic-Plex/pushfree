@@ -20,6 +20,8 @@ import net.pushfree.android.R
 import net.pushfree.android.data.AckState
 import net.pushfree.android.data.MessageEntity
 import net.pushfree.android.data.PushFreeDatabase
+import net.pushfree.android.e2ee.E2ee
+import net.pushfree.android.e2ee.SharedPrefsE2eeKeyStore
 import net.pushfree.android.notifications.Notifications
 import net.pushfree.android.notifications.PushfreeNotificationBuilder
 import net.pushfree.android.outbox.AckOutboxServices
@@ -87,12 +89,22 @@ class WsForegroundService : Service() {
                     updateStatus(getString(R.string.ws_status_reconnecting))
                 is WsEvent.Message -> {
                     val m = event.message
+                    // Decrypt BEFORE storing (todo 44 ingest hook, todo 28/32
+                    // pipeline). A wrong/missing key -> placeholder; the
+                    // message is still stored + notified, never the ciphertext.
+                    val key = SharedPrefsE2eeKeyStore(applicationContext).get()
+                    val (title, body) = E2ee.decryptTitleBody(
+                        title = m.title,
+                        body = m.body,
+                        encrypted = m.encrypted,
+                        hexKey = key,
+                    )
                     val entity = MessageEntity(
                         id = m.id,
                         sub = serverUrl,
                         sendId = m.sendId,
-                        title = m.title,
-                        body = m.body,
+                        title = title,
+                        body = body,
                         priority = m.priority,
                         attachmentUri = m.attachmentUri,
                         ackState = if (m.receiptId != null) AckState.PENDING else AckState.NONE,

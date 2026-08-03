@@ -11,6 +11,8 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import net.pushfree.android.data.AckState
 import net.pushfree.android.data.MessageEntity
+import net.pushfree.android.e2ee.E2ee
+import net.pushfree.android.e2ee.SharedPrefsE2eeKeyStore
 import net.pushfree.android.notifications.Notifications
 import net.pushfree.android.notifications.PushfreeNotificationBuilder
 import net.pushfree.android.outbox.AckOutboxServices
@@ -77,7 +79,10 @@ class PushfreeFcmService : FirebaseMessagingService() {
             Log.w(TAG, "dropping FCM message id=${payload.id}: no subscription configured")
             return
         }
-        val entity = payload.toMessageEntity(sub)
+        val entity = payload.toMessageEntity(
+            sub = sub,
+            hexKey = SharedPrefsE2eeKeyStore(applicationContext).get(),
+        )
         db.messageDao().insert(entity)
         postNotification(entity)
     }
@@ -108,15 +113,24 @@ class PushfreeFcmService : FirebaseMessagingService() {
     }
 }
 
-/** Map a parsed [FcmPayload] onto a Room [MessageEntity] attributed to [sub]. */
-internal fun FcmPayload.toMessageEntity(sub: String): MessageEntity = MessageEntity(
-    id = id,
-    sub = sub,
-    sendId = sendId,
-    title = title,
-    body = body,
-    priority = priority,
-    attachmentUri = attachmentUri,
-    ackState = if (receiptId != null) AckState.PENDING else AckState.NONE,
-    receiptId = receiptId,
-)
+/**
+ * Map a parsed [FcmPayload] onto a Room [MessageEntity] attributed to [sub].
+ * When [hexKey] is supplied and [FcmPayload.encrypted] is true, the title/body
+ * are decrypted before storage (todo 44); any failure yields a placeholder so
+ * ciphertext never reaches the UI. `hexKey` defaults to null so existing
+ * non-encrypted tests compile unchanged.
+ */
+internal fun FcmPayload.toMessageEntity(sub: String, hexKey: String? = null): MessageEntity {
+    val (title, body) = E2ee.decryptTitleBody(title, body, encrypted, hexKey)
+    return MessageEntity(
+        id = id,
+        sub = sub,
+        sendId = sendId,
+        title = title,
+        body = body,
+        priority = priority,
+        attachmentUri = attachmentUri,
+        ackState = if (receiptId != null) AckState.PENDING else AckState.NONE,
+        receiptId = receiptId,
+    )
+}

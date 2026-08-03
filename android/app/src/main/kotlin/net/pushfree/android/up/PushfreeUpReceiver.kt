@@ -11,6 +11,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import net.pushfree.android.data.MessageEntity
+import net.pushfree.android.e2ee.SharedPrefsE2eeKeyStore
 import net.pushfree.android.notifications.Notifications
 import net.pushfree.android.notifications.PushfreeNotificationBuilder
 import net.pushfree.android.outbox.AckOutboxServices
@@ -54,6 +55,7 @@ class PushfreeUpReceiver : BroadcastReceiver() {
             database = AckOutboxServices.database(context.applicationContext),
             registrar = OkHttpUpRegistrar(context.applicationContext),
             onMessagePersisted = { entity -> postNotification(context.applicationContext, entity) },
+            keyProvider = { SharedPrefsE2eeKeyStore(context.applicationContext).get() },
         )
         scope.launch {
             try {

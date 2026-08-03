@@ -23,6 +23,8 @@ data class FcmPayload(
     val priority: Int,
     val receiptId: String?,
     val attachmentUri: String?,
+    /** True when title/body are E2EE base64 blobs (todo 44). */
+    val encrypted: Boolean = false,
 )
 
 /**
@@ -53,6 +55,7 @@ fun parseFcmPayload(data: Map<String, String>): FcmPayload? {
     val receiptId = data["receipt_id"]?.takeIf { it.isNotEmpty() }
         ?: data["receipt"]?.takeIf { it.isNotEmpty() }
     val attachmentUri = data["attachment"]?.takeIf { it.isNotEmpty() }
+    val encrypted = data["encrypted"]?.let { it == "1" || it.equals("true", ignoreCase = true) } ?: false
     return FcmPayload(
         id = id,
         sendId = sendId,
@@ -61,5 +64,6 @@ fun parseFcmPayload(data: Map<String, String>): FcmPayload? {
         priority = priority,
         receiptId = receiptId,
         attachmentUri = attachmentUri,
+        encrypted = encrypted,
     )
 }

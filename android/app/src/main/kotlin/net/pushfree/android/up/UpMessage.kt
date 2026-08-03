@@ -2,6 +2,7 @@ package net.pushfree.android.up
 
 import net.pushfree.android.data.AckState
 import net.pushfree.android.data.MessageEntity
+import net.pushfree.android.e2ee.E2ee
 import org.json.JSONObject
 
 /**
@@ -29,6 +30,8 @@ data class UpMessage(
     val priority: Int,
     val receiptId: String?,
     val attachmentUri: String?,
+    /** True when title/body are E2EE base64 blobs (todo 44). */
+    val encrypted: Boolean = false,
 )
 
 /**
@@ -67,6 +70,7 @@ fun parseUpMessage(bytes: ByteArray): UpMessage? {
     val receiptId = json.optString("receipt_id").takeIf { it.isNotEmpty() }
         ?: json.optString("receipt").takeIf { it.isNotEmpty() }
     val attachmentUri = json.optString("attachment").takeIf { it.isNotEmpty() }
+    val encrypted = json.booleanish("encrypted", false)
     return UpMessage(
         id = id,
         sendId = sendId,
@@ -75,18 +79,37 @@ fun parseUpMessage(bytes: ByteArray): UpMessage? {
         priority = priority,
         receiptId = receiptId,
         attachmentUri = attachmentUri,
+        encrypted = encrypted,
     )
 }
 
-/** Map a parsed [UpMessage] onto a Room [MessageEntity] attributed to [sub]. */
-internal fun UpMessage.toMessageEntity(sub: String): MessageEntity = MessageEntity(
-    id = id,
-    sub = sub,
-    sendId = sendId,
-    title = title,
-    body = body,
-    priority = priority,
-    attachmentUri = attachmentUri,
-    ackState = if (receiptId != null) AckState.PENDING else AckState.NONE,
-    receiptId = receiptId,
-)
+/**
+ * Map a parsed [UpMessage] onto a Room [MessageEntity] attributed to [sub].
+ * When [hexKey] is supplied and [UpMessage.encrypted] is true, the title/body
+ * are decrypted before storage (todo 44); any failure yields a placeholder so
+ * ciphertext never reaches the UI. `hexKey` defaults to null so existing
+ * non-encrypted tests compile unchanged.
+ */
+internal fun UpMessage.toMessageEntity(sub: String, hexKey: String? = null): MessageEntity {
+    val (title, body) = E2ee.decryptTitleBody(title, body, encrypted, hexKey)
+    return MessageEntity(
+        id = id,
+        sub = sub,
+        sendId = sendId,
+        title = title,
+        body = body,
+        priority = priority,
+        attachmentUri = attachmentUri,
+        ackState = if (receiptId != null) AckState.PENDING else AckState.NONE,
+        receiptId = receiptId,
+    )
+}
+
+/** Boolean read tolerant of bool OR int (1) serialization of the flag. */
+private fun JSONObject.booleanish(key: String, default: Boolean): Boolean =
+    when (val v = opt(key)) {
+        is Boolean -> v
+        is Int -> v == 1
+        is Long -> v == 1L
+        else -> default
+    }

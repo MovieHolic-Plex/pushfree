@@ -27,6 +27,7 @@ object WsProtocol {
     const val FIELD_RECEIPT = "receipt"
     const val FIELD_RECEIPT_ID = "receipt_id"
     const val FIELD_ATTACHMENT = "attachment"
+    const val FIELD_ENCRYPTED = "encrypted"
 }
 
 /**
@@ -41,6 +42,8 @@ data class WsMessage(
     val priority: Int,
     val receiptId: String?,
     val attachmentUri: String?,
+    /** True when title/body are E2EE base64 blobs (todo 44 ingest hook). */
+    val encrypted: Boolean = false,
 )
 
 /**
@@ -96,9 +99,19 @@ private fun parseMessage(json: JSONObject): WsMessage {
         receiptId = json.stringOrNull(WsProtocol.FIELD_RECEIPT_ID)
             ?: json.stringOrNull(WsProtocol.FIELD_RECEIPT),
         attachmentUri = json.stringOrNull(WsProtocol.FIELD_ATTACHMENT),
+        encrypted = json.booleanish(WsProtocol.FIELD_ENCRYPTED, false),
     )
 }
 
 /** Null-safe string read: absent key -> null; present -> its string value. */
 private fun JSONObject.stringOrNull(key: String): String? =
     if (has(key)) optString(key).takeUnless { it.isEmpty() } else null
+
+/** Boolean read tolerant of bool OR int (1) serialization of the flag. */
+private fun JSONObject.booleanish(key: String, default: Boolean): Boolean =
+    when (val v = opt(key)) {
+        is Boolean -> v
+        is Int -> v == 1
+        is Long -> v == 1L
+        else -> default
+    }

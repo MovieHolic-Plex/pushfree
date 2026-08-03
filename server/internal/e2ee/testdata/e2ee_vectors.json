@@ -1,0 +1,75 @@
+{
+  "format": "gzip -\u003e AES-256-CBC (PKCS7, fresh 16B IV) -\u003e HMAC-SHA256(key, IV||ct) -\u003e base64(IV||ct||hmac); key is 64 hex chars (32 bytes); per-field independent IV+HMAC",
+  "hmac_len": 32,
+  "iv_len": 16,
+  "key_hex_len": 64,
+  "vectors": [
+    {
+      "name": "canonical",
+      "key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "iv_hex": "101112131415161718191a1b1c1d1e1f",
+      "plaintext": "Pushfree E2EE test vector",
+      "blob": "EBESExQVFhcYGRobHB0eH+H+RbqY6toNuwTZIUgu6khdJzaXoAZCVMt+hBomXRfLv1da9lDtdsVsjSyBLEvEZx4qB2Qxr7AA7sLRD35iN+saYCUlLB6VXYDBGTOK/AIlUmW08B3c4Llt/QJtiPkOug=="
+    },
+    {
+      "name": "empty",
+      "key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "iv_hex": "101112131415161718191a1b1c1d1e1f",
+      "plaintext": "",
+      "blob": "EBESExQVFhcYGRobHB0eH6lrM1JcvHmXyVlplU9FQjnwFIckmlDCqo65gouaTbCyRnVOf22IKd3m1PGbq44b0H6kCPDCXDh57AU/BvHoNPU="
+    },
+    {
+      "name": "short",
+      "key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "iv_hex": "101112131415161718191a1b1c1d1e1f",
+      "plaintext": "hi",
+      "blob": "EBESExQVFhcYGRobHB0eHy4Ra/E5MRH0Jm6JHxhngpTv9E2tsSzozAz0h++HPHi+BoFF6cdvjDiKaym9ihhzQusO49ATlNU+w10cuWIfN/w="
+    },
+    {
+      "name": "second_iv",
+      "key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "iv_hex": "a064a96d3bf9bb48c6b13f78aaa8c6f9",
+      "plaintext": "alternate IV coverage",
+      "blob": "oGSpbTv5u0jGsT94qqjG+dVYAai9D+tpg/X8HpqDlZX9bOmjCZpXRX06ZGbUfIBSf9ewAGQW7n5lZPeMX+1ujRVirx6g5/B2XlTmZDz1QvJLULJPlQAVSC6GibzoRSD+"
+    },
+    {
+      "name": "unicode",
+      "key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "iv_hex": "101112131415161718191a1b1c1d1e1f",
+      "plaintext": "Émojis 🚀🔥 and 日本語 — UTF-8 round-trip",
+      "blob": "EBESExQVFhcYGRobHB0eHyIp48PhogcZi5N38u6rzmGLCT48CarmLvHW19zPDFM/uQIFoyfoGOfBrU709ziHQ6G1zm+GcDfRf5Nd++7qwpji6rfcuFXCjZKbKVucxgLciPt9jcBObzZjELKyd3wJdA08J5ryTOQYTZ2HRHIrQOc="
+    },
+    {
+      "name": "multiline",
+      "key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "iv_hex": "101112131415161718191a1b1c1d1e1f",
+      "plaintext": "Subject line\nBody with \u003cb\u003ehtml\u003c/b\u003e \u0026 ampersand",
+      "blob": "EBESExQVFhcYGRobHB0eH4QMrf7U09cm8vwiAw2cW0TB8QkCf4Ws5adxGMcEI7o2h2Hbw25nREkHcbNfKsKmvHkvzl39Qoo2hpSl6b9Qb7hm4XQVWWf90Rcb+QWuluLBYlXdab7mlfa38LjuZqAhQ+Fxl264+DjEb2lBp8Htq30="
+    },
+    {
+      "name": "long_500",
+      "key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "iv_hex": "101112131415161718191a1b1c1d1e1f",
+      "plaintext": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "blob": "EBESExQVFhcYGRobHB0eH+DsOfFH4PMrU47GIhmUUSR3uIOuM46qs7bltRnmO3ymYT6qaBJ/fBgAGcvx1AMGZPSOmzDh4SEvIW43O2YUrEo="
+    },
+    {
+      "name": "wrong_key",
+      "key_hex": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "iv_hex": "101112131415161718191a1b1c1d1e1f",
+      "plaintext": "",
+      "blob": "EBESExQVFhcYGRobHB0eH+H+RbqY6toNuwTZIUgu6khdJzaXoAZCVMt+hBomXRfLv1da9lDtdsVsjSyBLEvEZx4qB2Qxr7AA7sLRD35iN+saYCUlLB6VXYDBGTOK/AIlUmW08B3c4Llt/QJtiPkOug==",
+      "expect_error": true,
+      "note": "canonical blob decrypted under an unrelated key; HMAC must fail"
+    },
+    {
+      "name": "tampered_hmac",
+      "key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "iv_hex": "101112131415161718191a1b1c1d1e1f",
+      "plaintext": "",
+      "blob": "EBESExQVFhcYGRobHB0eH+H+RbqY6toNuwTZIUgu6khdJzaXoAZCVMt+hBomXRfLv1da9lDtdsVsjSyBLEvEZx4qB2Qxr7AA7sLRD35iN+saYCUlLB6VXYDBGTOK/AIlUmW08B3c4Llt/QJtiPkOuw==",
+      "expect_error": true,
+      "note": "last byte (HMAC) flipped; verification must fail"
+    }
+  ]
+}

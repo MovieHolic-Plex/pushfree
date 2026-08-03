@@ -25,6 +25,8 @@ class UpDispatcher(
     private val database: PushFreeDatabase,
     private val registrar: UpRegistrar,
     private val onMessagePersisted: suspend (MessageEntity) -> Unit = {},
+    /** Supplies the configured E2EE key (todo 44), or null when unset. */
+    private val keyProvider: () -> String? = { null },
 ) {
     /**
      * Apply [event]. A MESSAGE_RECEIVED whose subscription is not yet
@@ -47,7 +49,7 @@ class UpDispatcher(
             Log.w(TAG, "dropping UP message id=${message.id}: no subscription configured")
             return
         }
-        val entity = message.toMessageEntity(sub)
+        val entity = message.toMessageEntity(sub = sub, hexKey = keyProvider())
         database.messageDao().insert(entity)
         onMessagePersisted(entity)
     }
