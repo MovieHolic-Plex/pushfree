@@ -18,15 +18,18 @@ import (
 	"github.com/pushfree/pushfree/internal/api"
 	"github.com/pushfree/pushfree/internal/callbacks"
 	"github.com/pushfree/pushfree/internal/config"
+	"github.com/pushfree/pushfree/internal/fcm"
+	"github.com/pushfree/pushfree/internal/receipts"
 	"github.com/pushfree/pushfree/internal/retention"
 	"github.com/pushfree/pushfree/internal/server"
+	"github.com/pushfree/pushfree/internal/store"
+	"github.com/pushfree/pushfree/internal/store/postgres"
 	"github.com/pushfree/pushfree/internal/store/sqlite"
+	"github.com/pushfree/pushfree/internal/timers"
 )
 
 func main() {
 	if err := run(); err != nil {
-		// Clear, human-readable message on stderr; non-zero exit so
-		// supervisors/containers see a failure.
 		fmt.Fprintln(os.Stderr, "pushfree:", err)
 		os.Exit(1)
 	}
@@ -51,15 +54,16 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	st, err := sqlite.Open(ctx, cfg.DBFile)
+	// --- Database backend selection ---------------------------------------
+	// If db-url is set, use Postgres; otherwise SQLite (the default).
+	repos, timerStore, retryStore, receiptGC, callbackWorkerRepo, cancelRepo, runRetension, walCp, closeDB, err := openStore(ctx, cfg, logger)
 	if err != nil {
-		return fmt.Errorf("open database: %w", err)
+		return err
 	}
-	defer func() { _ = st.Close() }()
+	defer closeDB()
 
-	// Retention sweeper: hourly message/attachment/TTL cleanup. A malformed
-	// duration fails loudly here rather than at the first sweep.
-	sweeper, err := retention.NewSweeper(st, retention.SystemClock{},
+	// --- Sweepers (message retention + receipt 7-day GC) ------------------
+	sweeper, err := retention.NewSweeper(runRetension, retention.SystemClock{},
 		cfg.SweeperInterval, cfg.MessagesRetention, cfg.AttachmentRetention, logger)
 	if err != nil {
 		return fmt.Errorf("retention sweeper: %w", err)
@@ -70,11 +74,19 @@ func run() error {
 		_ = sweeper.Run(ctx)
 	}()
 
-	// Windows/testing graceful-stop path. POSIX SIGTERM cannot be delivered
-	// to a Windows console child process (os.Process.Signal is unsupported
-	// and taskkill posts WM_CLOSE, which console apps never see), so when
-	// this flag is set, closing stdin cancels the root context exactly like
-	// SIGTERM/SIGINT. Leave false in normal operation.
+	sweeperInterval := parseDurationOrDefault(cfg.SweeperInterval, time.Hour)
+
+	receiptSweeper := api.NewReceiptSweeper(receiptGC, 7*24*time.Hour, time.Now, sweeperInterval)
+	receiptSweeperDone := make(chan struct{})
+	go func() {
+		defer close(receiptSweeperDone)
+		receiptSweeper.Run(ctx)
+	}()
+
+	// --- Timer engine (priority-2 retry/expire) ---------------------------
+	timerEngine := timers.NewEngine(timerStore)
+	timerDone := make(chan struct{})
+
 	if cfg.ShutdownOnStdinEOF {
 		go func() {
 			io.Copy(io.Discard, os.Stdin)
@@ -83,9 +95,6 @@ func run() error {
 		}()
 	}
 
-	// Stateful sessions need a stable signing secret; a config secret persists
-	// across restarts. With none set, a random one is generated per process and
-	// all outstanding sessions are invalidated on the next restart.
 	authSecret := []byte(cfg.AuthSecret)
 	if len(authSecret) == 0 {
 		gen := make([]byte, 32)
@@ -98,12 +107,8 @@ func run() error {
 
 	srv := server.New(cfg, logger)
 
-	// Callback worker (todo 25): SSRF-guarded webhook delivery with a 60s
-	// retry on non-2xx. Built before Accounts so the ack-hook seam is
-	// installed before routes are registered. The default denylist (loopback,
-	// link-local, RFC1918, ULA) is fully enforced; only configured
-	// callback-allowed-hosts bypass it.
-	callbackWorker := callbacks.NewWorker(sqlite.NewCallbackWorkerRepo(st.DB()), callbacks.Options{
+	// --- Callback worker --------------------------------------------------
+	callbackWorker := callbacks.NewWorker(callbackWorkerRepo, callbacks.Options{
 		AllowedHosts: cfg.CallbackAllowedHosts,
 		Logger:       logger,
 	})
@@ -113,51 +118,139 @@ func run() error {
 		_ = callbackWorker.Run(ctx)
 	}()
 
-	accounts := api.New(st.Repos(), authSecret, 0, logger)
+	// --- Accounts + routes -----------------------------------------------
+	accounts := api.New(repos, authSecret, 0, logger)
 	accounts.SetAckHook(callbackWorker)
+
+	// Wire the hub first so the redeliver adapter can reference it.
+	srv.MountRealtime(repos, authSecret)
+	h := srv.Hub()
+
+	// Build the redeliver adapter and retry handler.
+	redeliver := server.NewRedeliverFunc(repos, h, logger)
+	timerEngine.RegisterHandler(timers.KindRetry, timers.NewRetryHandler(
+		timerEngine, retryStore, receipts.DefaultRetryPolicy(),
+		timers.Clock(time.Now), redeliver, nil,
+	))
+
+	// Wire the retry seeder so priority-2 sends create their initial timer.
+	seeder := server.NewRetrySeeder(timerEngine, receipts.DefaultRetryPolicy(), logger)
+	accounts.SetRetrySeeder(seeder)
+
+	// Start the timer engine loop.
+	go func() {
+		defer close(timerDone)
+		_ = timerEngine.Run(ctx, sweeperInterval)
+	}()
+
 	accounts.Register(srv.Mux())
-	// Cancel + cancel_by_tag endpoints (todo 24). Registered as a standalone
-	// group on the same mux; the CancelStore is the SQLite CancelRepo over the
-	// shared DB. The live cancel broadcaster is nil here -- the hub-side
-	// BroadcastCancel is wired once live message push exists (todos 22/23);
-	// the persisted canceled state stops retries regardless.
-	api.NewCancelAPI(st.Repos(), sqlite.NewCancelRepo(st.DB()), nil, logger).Register(srv.Mux())
-	srv.MountRealtime(st.Repos(), authSecret)
-	// Wire the realtime hub as the live-publish destination for message
-	// ingests: a successful POST /1/messages.json now fans the just-stored
-	// rows out to every connected WS/SSE transport of the recipient. Must
-	// run after MountRealtime constructs the hub.
-	accounts.SetLivePublisher(srv.Hub())
+	api.NewCancelAPI(repos, cancelRepo, nil, logger).Register(srv.Mux())
+	accounts.SetLivePublisher(h)
+
+	// --- FCM (optional) ---------------------------------------------------
+	if cfg.FCMCredentialsFile != "" {
+		fcmClient, err := fcm.MaybeNew(ctx, cfg.FCMCredentialsFile, logger)
+		if err != nil {
+			logger.Error("fcm: failed to initialize, channel disabled", "err", err)
+		} else if fcmClient != nil {
+			logger.Info("fcm: delivery channel enabled")
+		} else {
+			logger.Info("fcm: delivery channel disabled (no credentials)")
+		}
+	} else {
+		logger.Info("fcm: delivery channel disabled (no credentials)")
+	}
+
 	logger.Info("starting pushfree server", "listen-addr", cfg.ListenAddr, "tls", cfg.TLSCertFile != "")
 	err = srv.Run(ctx)
 
-	// server.Run has drained HTTP (capped at 10s internally on ctx cancel).
-	// Release the sweeper (on a startup-bind failure ctx is not yet canceled)
-	// and wait for it to stop touching the database before the checkpoint.
+	// --- Graceful shutdown ------------------------------------------------
 	stop()
 	<-sweeperDone
+	<-receiptSweeperDone
 	<-callbackDone
+	<-timerDone
 
-	// WAL checkpoint as the shutdown tail: bounded by shutdown-timeout so the
-	// whole stop stays inside the 10s budget on an idle server. The logged
-	// result is the WAL-checkpoint evidence required by the SIGTERM test.
-	shutdownTimeout, perr := time.ParseDuration(cfg.ShutdownTimeout)
-	if perr != nil {
-		logger.Error("invalid shutdown-timeout; using fallback", "raw", cfg.ShutdownTimeout, "err", perr)
-		shutdownTimeout = 10 * time.Second
+	runWALCheckpoint(ctx, logger, walCp, cfg.ShutdownTimeout)
+
+	if errors.Is(err, http.ErrServerClosed) {
+		return nil
 	}
-	checkpointCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
-	res, cpErr := st.WALCheckpoint(checkpointCtx)
-	cancel()
+	return err
+}
+
+// openStore opens the configured database backend (SQLite or Postgres based
+// on cfg.DBURL) and returns the wired components main.go needs.
+func openStore(ctx context.Context, cfg *config.Config, logger *slog.Logger) (
+	repos store.Repos,
+	timerStore timers.Store,
+	retryStore receipts.RetryStore,
+	receiptGC api.ReceiptGCStore,
+	callbackWorkerRepo callbacks.Store,
+	cancelRepo receipts.CancelStore,
+	retentionStore retention.Store,
+	walCp func(context.Context) (sqlite.WALCheckpointResult, error),
+	closeFn func(),
+	err error,
+) {
+	if cfg.DBURL != "" {
+		pgSt, e := postgres.Open(ctx, cfg.DBURL)
+		if e != nil {
+			err = fmt.Errorf("open postgres: %w", e)
+			return
+		}
+		repos = pgSt.Repos()
+		timerStore = pgSt.TimerEngine()
+		retryStore = pgSt.ReceiptRepo()
+		receiptGC = pgSt.Repos().Receipts
+		callbackWorkerRepo = postgres.NewCallbackWorkerRepo(pgSt.DB())
+		cancelRepo = postgres.NewCancelRepo(pgSt.DB())
+		retentionStore = pgSt
+		walCp = func(context.Context) (sqlite.WALCheckpointResult, error) {
+			return sqlite.WALCheckpointResult{}, nil
+		}
+		closeFn = func() { _ = pgSt.Close() }
+		return
+	}
+
+	sqliteSt, e := sqlite.Open(ctx, cfg.DBFile)
+	if e != nil {
+		err = fmt.Errorf("open sqlite: %w", e)
+		return
+	}
+	logger.Info("database backend: sqlite", "db-file", cfg.DBFile)
+	repos = sqliteSt.Repos()
+	timerStore = sqliteSt.TimerEngine()
+	retryStore = sqliteSt.ReceiptRepo()
+	receiptGC = sqliteSt.Repos().Receipts
+	callbackWorkerRepo = sqlite.NewCallbackWorkerRepo(sqliteSt.DB())
+	cancelRepo = sqlite.NewCancelRepo(sqliteSt.DB())
+	retentionStore = sqliteSt
+	walCp = sqliteSt.WALCheckpoint
+	closeFn = func() { _ = sqliteSt.Close() }
+	return
+}
+
+func parseDurationOrDefault(s string, def time.Duration) time.Duration {
+	if d, err := time.ParseDuration(s); err == nil && d > 0 {
+		return d
+	}
+	return def
+}
+
+func runWALCheckpoint(ctx context.Context, logger *slog.Logger, cp func(context.Context) (sqlite.WALCheckpointResult, error), timeout string) {
+	dur, err := time.ParseDuration(timeout)
+	if err != nil {
+		logger.Error("invalid shutdown-timeout; using fallback", "raw", timeout, "err", err)
+		dur = 10 * time.Second
+	}
+	cpCtx, cancel := context.WithTimeout(context.Background(), dur)
+	defer cancel()
+	res, cpErr := cp(cpCtx)
 	if cpErr != nil {
 		logger.Error("shutdown wal checkpoint failed", "err", cpErr)
 	} else {
 		logger.Info("shutdown wal checkpoint complete",
 			"busy", res.Busy, "log", res.Log, "checkpointed", res.Checkpointed)
 	}
-
-	if errors.Is(err, http.ErrServerClosed) {
-		return nil
-	}
-	return err
 }

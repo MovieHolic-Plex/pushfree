@@ -33,7 +33,7 @@ sealed interface AckPostResult {
  * without opening real sockets.
  */
 fun interface AckPoster {
-    suspend fun post(serverUrl: String, receiptId: String, secret: String): AckPostResult
+    suspend fun post(serverUrl: String, receiptId: String, deviceId: String, secret: String): AckPostResult
 }
 
 /**
@@ -45,10 +45,12 @@ object HttpUrlConnectionAckPoster : AckPoster {
     override suspend fun post(
         serverUrl: String,
         receiptId: String,
+        deviceId: String,
         secret: String,
     ): AckPostResult = withContext(Dispatchers.IO) {
         val url = "${serverUrl.trimEnd('/')}/1/receipts/$receiptId/acknowledge.json"
-        val form = "secret=" + URLEncoder.encode(secret, "UTF-8")
+        val form = "device_id=" + URLEncoder.encode(deviceId, "UTF-8") +
+            "&secret=" + URLEncoder.encode(secret, "UTF-8")
         var conn: HttpURLConnection? = null
         try {
             conn = (URL(url).openConnection() as HttpURLConnection).apply {

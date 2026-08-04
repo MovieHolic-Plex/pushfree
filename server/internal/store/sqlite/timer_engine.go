@@ -56,3 +56,8 @@ func (t *TimerRepo) ResetOrphanedClaims(ctx context.Context) (int, error) {
 // widening store.TimerRepo) keeps the shared interface stable for todos 5,
 // 23, and 24 while letting todo 22 reach its full storage surface.
 func (s *Store) TimerEngine() *TimerRepo { return s.timrs }
+
+// ReceiptRepo returns the concrete *ReceiptRepo so the timer engine's retry
+// handler can be wired against the receipts.RetryStore surface
+// (GetReceipt/IncrementRetry/SetExpired) in addition to store.ReceiptRepo.
+func (s *Store) ReceiptRepo() *ReceiptRepo { return s.rcpts }

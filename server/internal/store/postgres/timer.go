@@ -77,3 +77,27 @@ func scanTimer(s scanner) (store.Timer, error) {
 	tm.ClaimedAt = nullTime(claimedAt)
 	return tm, nil
 }
+
+// Delete removes one timer row by id. It is not an error if the id is absent
+// (idempotent delete). Used by the timer engine after a timer fires.
+func (t *TimerRepo) Delete(ctx context.Context, id int64) error {
+	if _, err := t.db.ExecContext(ctx, `DELETE FROM timers WHERE id = $1`, id); err != nil {
+		return mapErr(err)
+	}
+	return nil
+}
+
+// ResetOrphanedClaims clears claimed_at on every currently-claimed timer,
+// returning the count of rows reset. Called once at startup so timers left
+// claimed by a crashed worker re-enter the due-set and fire exactly once.
+func (t *TimerRepo) ResetOrphanedClaims(ctx context.Context) (int, error) {
+	res, err := t.db.ExecContext(ctx, `UPDATE timers SET claimed_at = NULL WHERE claimed_at IS NOT NULL`)
+	if err != nil {
+		return 0, mapErr(err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, mapErr(err)
+	}
+	return int(n), nil
+}

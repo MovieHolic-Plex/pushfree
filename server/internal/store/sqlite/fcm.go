@@ -21,3 +21,16 @@ func (d *DeviceRepo) ClearFCMToken(ctx context.Context, deviceID string) error {
 	}
 	return nil
 }
+
+// SetFCMToken stores the FCM registration token on the device matching
+// deviceID, overwriting any existing token. Called by POST
+// /1/devices/fcm_token.json when a client registers or refreshes its token.
+// An unknown device_id updates zero rows and returns nil (the caller has
+// already authenticated the device, so this should not happen in practice).
+func (d *DeviceRepo) SetFCMToken(ctx context.Context, deviceID, fcmToken string) error {
+	if _, err := d.db.ExecContext(ctx,
+		`UPDATE devices SET fcm_token = ? WHERE device_id = ?`, fcmToken, deviceID); err != nil {
+		return mapErr(err)
+	}
+	return nil
+}

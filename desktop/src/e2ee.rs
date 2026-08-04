@@ -356,6 +356,7 @@ mod tests {
             ttl: 0,
             tag: String::new(),
             encrypted: true,
+            receipt_id: String::new(),
         }
     }
 

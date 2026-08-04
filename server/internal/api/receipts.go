@@ -44,6 +44,22 @@ type AckHook interface {
 // the ack path skips the callback entirely.
 func (a *Accounts) SetAckHook(h AckHook) { a.ackHook = h }
 
+// RetrySeeder seeds the first priority-2 retry timer after a successful
+// ingest. It is a seam so the api package does not import the timers package
+// directly. nil (the default) means no retry timer is created and the receipt
+// stays pending (the pre-wiring behavior).
+type RetrySeeder interface {
+	// SeedRetry creates the initial "retry" timer for receiptID, using the
+	// caller-supplied retry interval (seconds) and expire window (seconds).
+	// createdAt is t=0 of the retry schedule. The timer fires immediately
+	// (the first attempt is due at createdAt).
+	SeedRetry(ctx context.Context, receiptID string, retryInterval, expireSeconds int, createdAt time.Time) error
+}
+
+// SetRetrySeeder installs the priority-2 retry seeder (todo 21/22 wiring).
+// nil (the default) means priority-2 receipts are created but never retried.
+func (a *Accounts) SetRetrySeeder(s RetrySeeder) { a.retrySeeder = s }
+
 // --- GET /1/receipts/{receipt}.json ----------------------------------------
 
 // receiptHandler implements receipt polling: GET /1/receipts/{receipt}.json

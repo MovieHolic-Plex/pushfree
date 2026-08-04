@@ -57,6 +57,7 @@ type StoredMessage struct {
 	TTL             int64  `json:"ttl,omitempty"`
 	Tag             string `json:"tag,omitempty"`
 	Encrypted       bool   `json:"encrypted,omitempty"`
+	ReceiptID       string `json:"receipt_id,omitempty"`
 }
 
 // fromRow joins a stored message row with its parent send into a StoredMessage.
@@ -77,6 +78,7 @@ func fromRow(m store.Message, s store.Send) StoredMessage {
 		TTL:             s.TTL,
 		Tag:             s.Tag,
 		Encrypted:       s.Encrypted,
+		ReceiptID:       s.ReceiptID,
 	}
 }
 

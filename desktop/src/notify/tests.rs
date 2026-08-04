@@ -54,7 +54,7 @@ impl NotifySink for MockSink {
 /// message id so tests assert "acked exactly once" and the retry sequence.
 struct MockAckClient {
     scripted: Mutex<VecDeque<AckOutcome>>,
-    calls: Mutex<Vec<i64>>,
+    calls: Mutex<Vec<String>>,
 }
 
 impl MockAckClient {
@@ -74,18 +74,18 @@ impl MockAckClient {
         }
     }
 
-    fn calls(&self) -> Vec<i64> {
+    fn calls(&self) -> Vec<String> {
         self.calls.lock().expect("client lock poisoned").clone()
     }
 }
 
 #[async_trait]
 impl AckClient for MockAckClient {
-    async fn ack(&self, message_id: i64) -> AckOutcome {
+    async fn ack(&self, receipt_id: &str) -> AckOutcome {
         self.calls
             .lock()
             .expect("client lock poisoned")
-            .push(message_id);
+            .push(receipt_id.to_string());
         self.scripted
             .lock()
             .expect("client lock poisoned")
@@ -111,6 +111,7 @@ fn msg(send_id: i64, id: i64, priority: i32) -> ServerMessage {
         ttl: 0,
         tag: String::new(),
         encrypted: false,
+        receipt_id: format!("rec-{id}"),
     }
 }
 
@@ -167,13 +168,13 @@ fn format_notification_priority_styles() {
 #[test]
 fn build_ack_url_shape() {
     assert_eq!(
-        build_ack_url("https://srv.example.com", 42, "s3cr3t"),
-        "https://srv.example.com/1/messages/42/ack.json?secret=s3cr3t"
+        build_ack_url("https://srv.example.com", "rec123", "dev1", "s3cr3t"),
+        "https://srv.example.com/1/receipts/rec123/acknowledge.json?device_id=dev1&secret=s3cr3t"
     );
     // trailing slash tolerated
     assert_eq!(
-        build_ack_url("http://h:2586/", 7, "abc"),
-        "http://h:2586/1/messages/7/ack.json?secret=abc"
+        build_ack_url("http://h:2586/", "abc", "dev2", "xyz"),
+        "http://h:2586/1/receipts/abc/acknowledge.json?device_id=dev2&secret=xyz"
     );
 }
 
@@ -237,36 +238,29 @@ fn dedup_tolerates_corrupt_log() {
 #[test]
 fn http_ack_client_rejects_invalid_base_url() {
     assert!(matches!(
-        HttpAckClient::new("ws://h".into(), "s".into()),
+        HttpAckClient::new("ws://h".into(), "d".into(), "s".into()),
         Err(AckClientError::InvalidBaseUrl)
     ));
-    assert!(HttpAckClient::new("http://h".into(), "s".into()).is_ok());
-    assert!(HttpAckClient::new("https://h".into(), "s".into()).is_ok());
+    assert!(HttpAckClient::new("http://h".into(), "d".into(), "s".into()).is_ok());
+    assert!(HttpAckClient::new("https://h".into(), "d".into(), "s".into()).is_ok());
 }
 
 // ---------------------------------------------------------------------------
-// Integration: duplicate send_id acked exactly once
+// Integration: duplicate send_id notified exactly once (no auto-ack)
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn duplicate_send_id_acked_exactly_once() {
-    let client = Arc::new(MockAckClient::success());
-    let (ack_tx, ack_rx) = mpsc::channel::<i64>(8);
-    let reporter = AckReporter::new(ack_rx, client.clone(), Duration::from_secs(60));
+async fn duplicate_send_id_notified_exactly_once() {
+    let (ack_tx, _ack_rx) = mpsc::channel::<String>(8);
     let sink = Arc::new(MockSink::new());
     let pipeline = Pipeline::new(Dedup::new(None), sink.clone(), ack_tx);
 
     // Same send_id (1), two deliveries (e.g. a WS replay). Only the first
-    // notifies and enqueues an ack.
+    // notifies; the duplicate is suppressed.
     let first = msg(1, 10, 0);
     let dup = msg(1, 11, 0); // different message id, SAME send_id
     assert_eq!(pipeline.handle(&first).await, HandleOutcome::Notified);
     assert_eq!(pipeline.handle(&dup).await, HandleOutcome::Duplicate);
-
-    // Closing the ack queue (dropping the pipeline) lets the reporter drain.
-    drop(pipeline);
-    let ran = tokio::time::timeout(Duration::from_secs(5), reporter.run()).await;
-    assert!(ran.is_ok(), "reporter drained within 5s real time");
 
     assert_eq!(sink.count(), 1, "exactly one notification for the send");
     let recorded = sink.recorded();
@@ -274,11 +268,6 @@ async fn duplicate_send_id_acked_exactly_once() {
     // priority 0 + empty title -> product-name fallback (format_notification).
     assert_eq!(recorded[0].title, "PushFree");
     assert_eq!(recorded[0].body, "body-1");
-    assert_eq!(
-        client.calls(),
-        vec![10],
-        "acked the FIRST message id exactly once; the duplicate was not acked"
-    );
 }
 
 // ---------------------------------------------------------------------------
@@ -292,16 +281,16 @@ async fn ack_500_retried_then_success() {
         AckOutcome::Retry(AckError::Status(500)),
         AckOutcome::Ok,
     ]));
-    let (ack_tx, ack_rx) = mpsc::channel::<i64>(8);
+    let (ack_tx, ack_rx) = mpsc::channel::<String>(8);
     // 60s retry delay. Under the paused clock this advances instantly; the
     // wall-clock assertion below proves no real 60s sleep happened.
     let reporter = AckReporter::new(ack_rx, client.clone(), Duration::from_secs(60));
-    let sink = Arc::new(MockSink::new());
-    let pipeline = Pipeline::new(Dedup::new(None), sink.clone(), ack_tx);
 
     let started = Instant::now();
-    pipeline.handle(&msg(7, 77, 0)).await;
-    drop(pipeline);
+    // Send the receipt directly — in production a user-triggered action
+    // (notification tap/dialog) will feed this channel.
+    ack_tx.send("rec-77".to_string()).await.unwrap();
+    drop(ack_tx);
 
     // The reporter sleeps 60s (virtual) between the failed and successful
     // attempt. The virtual budget (600s) is far above 60s so the reporter's
@@ -321,10 +310,9 @@ async fn ack_500_retried_then_success() {
         "retry sequence took {elapsed:?} real time - a real sleep leaked in"
     );
 
-    assert_eq!(sink.count(), 1, "notified once");
     assert_eq!(
         client.calls(),
-        vec![77, 77],
+        vec!["rec-77".to_string(), "rec-77".to_string()],
         "acked twice: first 500-retry, then success"
     );
 }
@@ -339,13 +327,11 @@ async fn ack_permanent_failure_not_retried() {
     let client = Arc::new(MockAckClient::sequence(vec![AckOutcome::Permanent(
         AckError::Status(404),
     )]));
-    let (ack_tx, ack_rx) = mpsc::channel::<i64>(8);
+    let (ack_tx, ack_rx) = mpsc::channel::<String>(8);
     let reporter = AckReporter::new(ack_rx, client.clone(), Duration::from_secs(60));
-    let sink = Arc::new(MockSink::new());
-    let pipeline = Pipeline::new(Dedup::new(None), sink.clone(), ack_tx);
 
-    pipeline.handle(&msg(9, 99, 0)).await;
-    drop(pipeline);
+    ack_tx.send("rec-99".to_string()).await.unwrap();
+    drop(ack_tx);
 
     let started = Instant::now();
     let ran = tokio::time::timeout(Duration::from_secs(600), reporter.run()).await;
@@ -359,13 +345,13 @@ async fn ack_permanent_failure_not_retried() {
     );
     assert_eq!(
         client.calls(),
-        vec![99],
+        vec!["rec-99".to_string()],
         "called exactly once then abandoned"
     );
 }
 
 // ---------------------------------------------------------------------------
-// Integration: notify failure does not block ack
+// Integration: notify failure does not block the pipeline
 // ---------------------------------------------------------------------------
 
 struct FailingSink;
@@ -376,24 +362,15 @@ impl NotifySink for FailingSink {
 }
 
 #[tokio::test]
-async fn notify_failure_still_acks() {
-    // EB/A3 best-effort contract: a notification failure must not suppress the
-    // ack (the server still needs to know the message reached the device).
-    let client = Arc::new(MockAckClient::success());
-    let (ack_tx, ack_rx) = mpsc::channel::<i64>(8);
-    let reporter = AckReporter::new(ack_rx, client.clone(), Duration::from_secs(60));
+async fn notify_failure_still_returns_notified() {
+    // EB/A3 best-effort contract: a notification failure must not suppress
+    // the pipeline outcome. The message is still marked Notified so the
+    // caller (WS event loop) proceeds normally.
+    let (ack_tx, _ack_rx) = mpsc::channel::<String>(8);
     let pipeline = Pipeline::new(Dedup::new(None), Arc::new(FailingSink), ack_tx);
 
     assert_eq!(
         pipeline.handle(&msg(5, 50, 0)).await,
         HandleOutcome::Notified
-    );
-    drop(pipeline);
-    let ran = tokio::time::timeout(Duration::from_secs(5), reporter.run()).await;
-    assert!(ran.is_ok());
-    assert_eq!(
-        client.calls(),
-        vec![50],
-        "ack posted despite notify failure"
     );
 }

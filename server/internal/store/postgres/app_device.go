@@ -122,6 +122,16 @@ func (d *DeviceRepo) ClearFCMToken(ctx context.Context, deviceID string) error {
 	return nil
 }
 
+// SetFCMToken stores the FCM registration token on the device matching
+// deviceID, overwriting any existing token.
+func (d *DeviceRepo) SetFCMToken(ctx context.Context, deviceID, fcmToken string) error {
+	if _, err := d.db.ExecContext(ctx,
+		`UPDATE devices SET fcm_token = $1 WHERE device_id = $2`, fcmToken, deviceID); err != nil {
+		return mapErr(err)
+	}
+	return nil
+}
+
 // ListByUser returns every device owned by userID in ascending id
 // (registration) order, with fcm_token resolved to "" when NULL.
 func (d *DeviceRepo) ListByUser(ctx context.Context, userID int64) ([]store.Device, error) {

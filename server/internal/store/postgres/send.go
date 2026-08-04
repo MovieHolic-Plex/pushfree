@@ -212,6 +212,39 @@ LIMIT $3`, recipientUserID, afterID, limit)
 	return out, mapErr(rows.Err())
 }
 
+// ListBySend returns every message row for the given sendID, ascending by id.
+// Used by the priority-2 retry scheduler's Redeliver adapter.
+func (m *MessageRepo) ListBySend(ctx context.Context, sendID int64) ([]store.Message, error) {
+	rows, err := m.db.QueryContext(ctx, `
+SELECT id, send_id, recipient_user_id, device_filter, delivered_at, created_at
+FROM messages
+WHERE send_id = $1
+ORDER BY id ASC`, sendID)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	defer rows.Close()
+	var out []store.Message
+	for rows.Next() {
+		var (
+			msg     store.Message
+			filter  sql.NullString
+			deliv   sql.NullTime
+			created sql.NullTime
+		)
+		if err := rows.Scan(&msg.ID, &msg.SendID, &msg.RecipientUserID, &filter, &deliv, &created); err != nil {
+			return nil, mapErr(err)
+		}
+		msg.DeviceFilter = nullStr(filter)
+		msg.DeliveredAt = nullTime(deliv)
+		if created.Valid {
+			msg.CreatedAt = created.Time
+		}
+		out = append(out, msg)
+	}
+	return out, mapErr(rows.Err())
+}
+
 // MarkDelivered records the first transport-accepted delivery time on a
 // message row. The `delivered_at IS NULL` guard makes it idempotent across
 // replay/redelivery.

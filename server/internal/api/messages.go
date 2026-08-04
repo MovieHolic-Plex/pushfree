@@ -166,6 +166,30 @@ func (a *Accounts) messagesHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Priority-2 (emergency) retry/expire parameters. Pushover requires these
+	// only for priority=2; they are silently ignored for other priorities.
+	// retry: minimum seconds between re-delivery attempts (>= 30).
+	// expire: seconds before the receipt expires (<= 10800).
+	var retryInterval, expireSeconds int
+	if priority == 2 {
+		if rv := r.FormValue("retry"); rv != "" {
+			n, err := strconv.Atoi(rv)
+			if err != nil || n < 30 {
+				errs = append(errs, "retry must be an integer >= 30 seconds")
+			} else {
+				retryInterval = n
+			}
+		}
+		if ev := r.FormValue("expire"); ev != "" {
+			n, err := strconv.Atoi(ev)
+			if err != nil || n <= 0 || n > 10800 {
+				errs = append(errs, "expire must be an integer between 1 and 10800 seconds")
+			} else {
+				expireSeconds = n
+			}
+		}
+	}
+
 	device := r.FormValue("device")
 	if device != "" {
 		for _, d := range strings.Split(device, ",") {
@@ -302,9 +326,9 @@ func (a *Accounts) messagesHandler(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	// priority=2: create a pending receipt placeholder (30-char id) matching
-	// the receipts schema. The retry/expire lifecycle is wired by todos 20-21;
-	// here we only seed the row in its initial state.
+	// priority=2: create a pending receipt with the parsed retry/expire policy.
+	// ExpiresAt is set so the retry scheduler and GC know when to expire it.
+	// The retry interval is stored implicitly via the first timer's fire_at.
 	var receipt *store.Receipt
 	if priority == 2 {
 		rid, err := newUserKey() // 30-char [A-Za-z0-9], same generator as user_key/token
@@ -313,7 +337,12 @@ func (a *Accounts) messagesHandler(w http.ResponseWriter, r *http.Request) {
 			writeRequestErrors(w, http.StatusInternalServerError, requestID, "could not send message")
 			return
 		}
-		receipt = &store.Receipt{ID: rid, State: "pending", Tag: tags}
+		rcpt := &store.Receipt{ID: rid, State: "pending", Tag: tags}
+		if expireSeconds > 0 {
+			exp := now.Add(time.Duration(expireSeconds) * time.Second)
+			rcpt.ExpiresAt = &exp
+		}
+		receipt = rcpt
 		send.ReceiptID = rid
 	}
 
@@ -336,6 +365,19 @@ func (a *Accounts) messagesHandler(w http.ResponseWriter, r *http.Request) {
 	// Ingest so the hub's subscribe-before-replay de-duplication is exact.
 	if a.livePublisher != nil {
 		a.livePublisher.PublishFanout(r.Context(), send, msgs)
+	}
+
+	// --- Priority-2 retry timer seeding ------------------------------------
+	// After a successful ingest of a priority-2 send, seed the first retry
+	// timer so the timer engine begins the emergency re-delivery cycle. The
+	// timer fires immediately (attempt 1 is due at createdAt). Best-effort:
+	// a failure here is logged but does not fail the send — the receipt row
+	// exists and the timer engine's Recover scan or a future re-send will
+	// pick it up.
+	if priority == 2 && receipt != nil && a.retrySeeder != nil {
+		if err := a.retrySeeder.SeedRetry(r.Context(), receipt.ID, retryInterval, expireSeconds, now); err != nil {
+			a.logger.Error("messages.json: seed retry timer", "receipt", receipt.ID, "err", err)
+		}
 	}
 
 	// --- Quota: 1 per recipient, then attach the live headers --------------

@@ -53,7 +53,7 @@ class AckWorker(
         }
 
         val targetReceiptId = message.receiptId ?: receiptId
-        return when (val res = AckOutboxServices.poster.post(sub.serverUrl, targetReceiptId, sub.secret)) {
+        return when (val res = AckOutboxServices.poster.post(sub.serverUrl, targetReceiptId, sub.deviceId, sub.secret)) {
             is AckPostResult.Success -> {
                 db.messageDao().updateAckState(message.id, AckState.ACKED)
                 val notifId = if (notificationId >= 0) notificationId else message.sendId.toInt()

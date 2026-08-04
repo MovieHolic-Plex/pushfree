@@ -1,20 +1,20 @@
 //! Local notification pipeline: dedup by `send_id`, OS notification via a
-//! [`NotifySink`], and best-effort ack reporting with retry.
+//! [`NotifySink`], and deferred emergency-receipt acknowledgement.
 //!
 //! # Contract (plan todo 38; research EB/A3-tauri.md, EB/A1-pushover-api.md)
 //! - A received message is shown as an OS notification through a
 //!   [`NotifySink`] (production impl: `tauri-plugin-notification`; tests use a
 //!   mock). Per EB/A3 the underlying `sendNotification` is best-effort ("at-desk
-//!   channel"): a notify failure is logged but never blocks ack reporting.
-//! - Duplicate `send_id`s are suppressed: a send is notified and acked AT MOST
-//!   once. The seen-set is in memory for the session and optionally persisted
+//!   channel"): a notify failure is logged but never blocks downstream work.
+//! - Duplicate `send_id`s are suppressed: a send is notified AT MOST once.
+//!   The seen-set is in memory for the session and optionally persisted
 //!   as an append-only log so a mid-session crash cannot double-fire.
-//! - Each new send is acked to the server:
-//!   `POST {base}/1/messages/{message_id}/ack.json?secret=...` (the server ack
-//!   handler lands in todo 23; until then this targets the todo 8 placeholder
-//!   contract). A 5xx or network error is retried after a fixed delay; a 4xx is
-//!   permanent and abandoned. Retries use `tokio::time::sleep` so they advance
-//!   instantly under a paused/virtual clock in tests (no real sleeps).
+//! - Emergency (priority-2) receipts are NOT auto-acked. Pushover emergency
+//!   semantics require the alert to repeat until a human explicitly
+//!   acknowledges it. A future Tauri notification action/dialog will trigger
+//!   the ack via [`AckClient`]; the ack infrastructure ([`AckReporter`],
+//!   [`AckClient`], [`build_ack_url`]) is wired and ready for that
+//!   user-triggered path but is not invoked from the notification pipeline.
 //!
 //! # Why a fixed (not jittered) ack retry delay
 //! A single desktop client acking its own server has no thundering-herd, so
@@ -42,8 +42,8 @@ mod tests;
 pub const DEFAULT_ACK_RETRY_DELAY: Duration = Duration::from_secs(60);
 
 /// URL prefix/suffix for the ack endpoint, relative to the server base.
-const ACK_PATH_PREFIX: &str = "/1/messages/";
-const ACK_PATH_SUFFIX: &str = "/ack.json";
+const ACK_PATH_PREFIX: &str = "/1/receipts/";
+const ACK_PATH_SUFFIX: &str = "/acknowledge.json";
 
 // ---------------------------------------------------------------------------
 // Notification content + priority -> style mapping
@@ -263,18 +263,18 @@ impl std::fmt::Display for AckError {
 /// scripted client; production uses [`HttpAckClient`].
 #[async_trait]
 pub trait AckClient: Send + Sync {
-    /// Acknowledge `message_id`. Must not panic; classify failures via the
+    /// Acknowledge `receipt_id`. Must not panic; classify failures via the
     /// returned [`AckOutcome`].
-    async fn ack(&self, message_id: i64) -> AckOutcome;
+    async fn ack(&self, receipt_id: &str) -> AckOutcome;
 }
 
 /// Build the absolute ack URL `POST {base}/1/messages/{id}/ack.json?secret=...`.
 /// A trailing slash on the base is tolerated. The secret is inlined into the
 /// query string because device secrets are 30-char `[A-Za-z0-9]` (todo 13) and
 /// need no percent-encoding.
-pub fn build_ack_url(server_base_url: &str, message_id: i64, secret: &str) -> String {
+pub fn build_ack_url(server_base_url: &str, receipt_id: &str, device_id: &str, secret: &str) -> String {
     let base = server_base_url.trim_end_matches('/');
-    format!("{base}{ACK_PATH_PREFIX}{message_id}{ACK_PATH_SUFFIX}?secret={secret}")
+    format!("{base}{ACK_PATH_PREFIX}{receipt_id}{ACK_PATH_SUFFIX}?device_id={device_id}&secret={secret}")
 }
 
 /// Configuration error from [`HttpAckClient::new`].
@@ -303,6 +303,7 @@ impl std::error::Error for AckClientError {}
 /// parameter to the ack endpoint and classifies the response.
 pub struct HttpAckClient {
     base_url: String,
+    device_id: String,
     secret: String,
     client: reqwest::Client,
 }
@@ -310,7 +311,7 @@ pub struct HttpAckClient {
 impl HttpAckClient {
     /// Construct with the server base URL and device secret. Reuses one
     /// connection pool for all acks.
-    pub fn new(base_url: String, secret: String) -> Result<Self, AckClientError> {
+    pub fn new(base_url: String, device_id: String, secret: String) -> Result<Self, AckClientError> {
         if !base_url.starts_with("http://") && !base_url.starts_with("https://") {
             return Err(AckClientError::InvalidBaseUrl);
         }
@@ -319,6 +320,7 @@ impl HttpAckClient {
             .map_err(|e| AckClientError::Build(e.to_string()))?;
         Ok(HttpAckClient {
             base_url,
+            device_id,
             secret,
             client,
         })
@@ -327,8 +329,8 @@ impl HttpAckClient {
 
 #[async_trait]
 impl AckClient for HttpAckClient {
-    async fn ack(&self, message_id: i64) -> AckOutcome {
-        let url = build_ack_url(&self.base_url, message_id, &self.secret);
+    async fn ack(&self, receipt_id: &str) -> AckOutcome {
+        let url = build_ack_url(&self.base_url, receipt_id, &self.device_id, &self.secret);
         let res = match self.client.post(&url).send().await {
             Ok(r) => r,
             Err(e) => return AckOutcome::Retry(AckError::Network(e.to_string())),
@@ -358,14 +360,14 @@ impl AckClient for HttpAckClient {
 /// it. Processing is serial: a desktop notifier's ack volume is low and serial
 /// retry keeps the retry sequence deterministic for tests.
 pub struct AckReporter<A: AckClient> {
-    rx: tokio::sync::mpsc::Receiver<i64>,
+    rx: tokio::sync::mpsc::Receiver<String>,
     client: Arc<A>,
     retry_delay: Duration,
 }
 
 impl<A: AckClient> AckReporter<A> {
     pub fn new(
-        rx: tokio::sync::mpsc::Receiver<i64>,
+        rx: tokio::sync::mpsc::Receiver<String>,
         client: Arc<A>,
         retry_delay: Duration,
     ) -> Self {
@@ -378,24 +380,24 @@ impl<A: AckClient> AckReporter<A> {
 
     /// Run until the queue sender is dropped. Consumes the reporter.
     pub async fn run(mut self) {
-        while let Some(message_id) = self.rx.recv().await {
-            self.ack_with_retry(message_id).await;
+        while let Some(receipt_id) = self.rx.recv().await {
+            self.ack_with_retry(&receipt_id).await;
         }
     }
 
-    async fn ack_with_retry(&self, message_id: i64) {
+    async fn ack_with_retry(&self, receipt_id: &str) {
         loop {
-            match self.client.ack(message_id).await {
+            match self.client.ack(receipt_id).await {
                 AckOutcome::Ok => return,
                 AckOutcome::Retry(err) => {
                     eprintln!(
-                        "[pushfree/ack] ack {message_id} failed ({err}); retrying in {:?}",
+                        "[pushfree/ack] ack {receipt_id} failed ({err}); retrying in {:?}",
                         self.retry_delay
                     );
                     tokio::time::sleep(self.retry_delay).await;
                 }
                 AckOutcome::Permanent(err) => {
-                    eprintln!("[pushfree/ack] ack {message_id} abandoned ({err})");
+                    eprintln!("[pushfree/ack] ack {receipt_id} abandoned ({err})");
                     return;
                 }
             }
@@ -410,8 +412,8 @@ impl<A: AckClient> AckReporter<A> {
 /// Outcome of [`Pipeline::handle`] for one message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HandleOutcome {
-    /// A new send_id: the notification was shown (best-effort) and an ack was
-    /// enqueued for the message id.
+    /// A new send_id: the notification was shown (best-effort). Emergency
+    /// receipts are not auto-acked (see module docs).
     Notified,
     /// A duplicate send_id: nothing was shown or acked.
     Duplicate,
@@ -422,7 +424,7 @@ pub enum HandleOutcome {
 pub struct Pipeline {
     dedup: Dedup,
     sink: Arc<dyn NotifySink>,
-    ack_tx: tokio::sync::mpsc::Sender<i64>,
+    ack_tx: tokio::sync::mpsc::Sender<String>,
     /// Optional E2EE key (64-hex). When present, encrypted message fields are
     /// decrypted before the notification is shown (todo 44); on any failure a
     /// safe placeholder is displayed. `None` => encrypted messages surface as
@@ -437,7 +439,7 @@ impl Pipeline {
     pub fn new(
         dedup: Dedup,
         sink: Arc<dyn NotifySink>,
-        ack_tx: tokio::sync::mpsc::Sender<i64>,
+        ack_tx: tokio::sync::mpsc::Sender<String>,
     ) -> Self {
         Pipeline {
             dedup,
@@ -468,23 +470,17 @@ impl Pipeline {
         if !self.dedup.observe(msg.send_id) {
             return HandleOutcome::Duplicate;
         }
-        // Decrypt BEFORE notify (todo 44 hook at the notify sink path). A wrong
-        // key / tampered blob yields `[undecryptable]`; the ack below still
-        // fires on the real message id.
+        // Decrypt BEFORE notify. A wrong key / tampered blob yields
+        // `[undecryptable]`; the notification still fires with a placeholder.
         let decrypted = crate::e2ee::decrypt_message(msg, self.e2ee_key.as_deref());
         if let Err(err) = self.sink.notify(&decrypted) {
             eprintln!("[pushfree/notify] {}", err);
         }
-        if let Err(err) = self.ack_tx.send(msg.id).await {
-            // The reporter task has gone away (app shutting down). The ack is
-            // not retried here: the WS since-cursor + dedup mean a later
-            // reconnect will not re-ack this send, so this is a best-effort
-            // drop during shutdown.
-            eprintln!(
-                "[pushfree/notify] ack queue closed (message {}): {}",
-                msg.id, err
-            );
-        }
+        // NOTE: Emergency (priority-2) receipts are NOT auto-acked. Pushover
+        // emergency semantics require explicit user acknowledgement (the alert
+        // must repeat until a human confirms). A future Tauri notification
+        // action or dialog will trigger the ack via AckClient; until then
+        // the ack infrastructure remains wired but unused.
         HandleOutcome::Notified
     }
 }

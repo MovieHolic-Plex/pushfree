@@ -256,6 +256,8 @@ pub struct ServerMessage {
     pub tag: String,
     #[serde(default)]
     pub encrypted: bool,
+    #[serde(default)]
+    pub receipt_id: String,
 }
 
 /// The login line sent as the first WS text frame.

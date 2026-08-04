@@ -239,6 +239,11 @@ type DeviceRepo interface {
 	// if the device has no token or does not exist (idempotent clear).
 	ClearFCMToken(ctx context.Context, deviceID string) error
 
+	// SetFCMToken stores the FCM registration token on the device with the
+	// given device_id. Called by POST /1/devices/fcm_token.json when a client
+	// registers or refreshes its FCM token. Overwrites any existing token.
+	SetFCMToken(ctx context.Context, deviceID, fcmToken string) error
+
 	// ListByUser returns every device owned by userID in ascending id
 	// (registration) order, with fcm_token resolved to "" when NULL. Used by
 	// POST /1/users/validate.json (todo 11) to surface the recipient's
@@ -304,6 +309,11 @@ type MessageRepo interface {
 	// (todo 13); todo 23 extends delivery confirmation into the receipt state
 	// machine.
 	MarkDelivered(ctx context.Context, messageID int64, at time.Time) error
+
+	// ListBySend returns every message row for the given sendID, in ascending
+	// id order. Used by the priority-2 retry scheduler's Redeliver adapter to
+	// re-publish an emergency send to all recipients' live WS/SSE connections.
+	ListBySend(ctx context.Context, sendID int64) ([]Message, error)
 
 	// MaxID returns the highest message id for a recipient, or 0 if the
 	// recipient has no messages. It is the high-water mark the hub reports in

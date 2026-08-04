@@ -142,6 +142,15 @@ func (s *Store) Repos() store.Repos {
 	}
 }
 
+// TimerEngine returns the concrete *TimerRepo so the timers engine can be
+// wired against Delete and ResetOrphanedClaims in addition to Create/ClaimDue.
+func (s *Store) TimerEngine() *TimerRepo { return s.timers }
+
+// ReceiptRepo returns the concrete *ReceiptRepo so the timer engine's retry
+// handler can be wired against the receipts.RetryStore surface
+// (GetReceipt/IncrementRetry/SetExpired) in addition to store.ReceiptRepo.
+func (s *Store) ReceiptRepo() *ReceiptRepo { return s.receipts }
+
 // inTx runs fn inside a database transaction. If fn returns nil the
 // transaction is committed; otherwise it is rolled back and fn's error is
 // returned (mapped by mapErr). The fn receives a queryExec bound to the

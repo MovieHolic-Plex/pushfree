@@ -1,196 +1,251 @@
 # PushFree
 
+**셀프 호스팅 푸시 알림. 메시지당 요금은 없다.**
+
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![Go](https://img.shields.io/badge/Go-1.26+-00ADD8?logo=go&logoColor=white)](https://go.dev)
+[![Android](https://img.shields.io/badge/Android-14+-3DDC84?logo=android&logoColor=white)](https://developer.android.com)
+[![Rust](https://img.shields.io/badge/Desktop-Tauri%202-DEA584?logo=rust&logoColor=white)](https://tauri.app)
+[![Pushover Compatible](https://img.shields.io/badge/Pushover-API%20Compatible-4A90D9)](https://pushover.net)
+
 **[한국어](README.md)** | [English](README.en.md)
 
-PushFree는 셀프 호스팅이 가능한 [Pushover](https://pushover.net) API 호환
-푸시 알림 서비스입니다. 오픈 소스(Apache-2.0)로, 서버는 직접 운영하고,
-데이터도 직접 소유하며, 메시지당 요금은 내지 않습니다.
+PushFree는 [Pushover](https://pushover.net) API와 호환되는 셀프 호스팅 푸시 알림 서비스입니다.
+서버는 단일 Go 바이너리로, API · 실시간 WebSocket/SSE 팬아웃 · 관리자 대시보드를 모두 내장합니다.
+이미 Pushover의 `messages.json`을 사용하는 도구라면 URL만 바꾸면 그대로 동작합니다.
 
-작고 단일한 Go 바이너리 하나가 API, 실시간 WebSocket/SSE 팬아웃, 그리고
-내장된 관리자 대시보드를 모두 제공합니다. 네이티브 클라이언트(Android,
-데스크톱)는 Open Client 프로토콜을 사용하며, Pushover의 `messages.json`을
-이미 사용하는 어떤 도구든 수정 없이 그대로 동작합니다.
+```
+curl -X POST https://your-pushfree/1/messages.json \
+  -d "token=$TOKEN" -d "user=$USERKEY" -d "message=hello"
+```
 
-## 뱃지
+---
 
-<!-- badges: CI status, license, latest version -->
+## 한눈에 보기
+
+<table>
+  <tr>
+    <td width="50%" align="center"><b>🌐 관리자 대시보드</b></td>
+    <td width="50%" align="center"><b>📱 Android 클라이언트</b></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/img/dashboard-overview.png" alt="Dashboard Overview"></td>
+    <td width="50%"><img src="docs/img/android-subscriptions.png" alt="Android Subscriptions"></td>
+  </tr>
+  <tr>
+    <td width="50%" align="center"><sub>앱 토큰 관리, 실시간 메시지, 할당량, 방해 금지 시간</sub></td>
+    <td width="50%" align="center"><sub>서버 구독, 알림 수신, 긴급 ack</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/img/dashboard-quota.png" alt="Quota Dashboard"></td>
+    <td width="50%"><img src="docs/img/android-settings.png" alt="Android Settings"></td>
+  </tr>
+  <tr>
+    <td width="50%" align="center"><sub>월간 할당량 및 속도제한 헤더</sub></td>
+    <td width="50%" align="center"><sub>WebSocket / FCM / UnifiedPush 전송 방식 선택</sub></td>
+  </tr>
+</table>
+
+<details>
+<summary>📱 더 많은 스크린샷</summary>
+
+| Android: 서버 추가 | Android: 설정 | 대시보드: 앱 토큰 | 대시보드: 방해 금지 시간 |
+|---|---|---|---|
+| <img src="docs/img/android-add-server.png" width="200"> | <img src="docs/img/android-settings.png" width="200"> | <img src="docs/img/dashboard-apps.png" width="300"> | <img src="docs/img/dashboard-quiethours.png" width="300"> |
+
+</details>
+
+---
+
+## 왜 PushFree인가?
+
+| Pushover | PushFree |
+|----------|----------|
+| 메시지당 $0.005 과금 | **무제한 무료** |
+| 클라우드 호스팅 | **직접 호스팅** — 데이터는 당신의 서버에 |
+| 폐쇄 소스 | **Apache-2.0 오픈 소스** |
+| 제한된 전송 방식 | **WebSocket + SSE + FCM + UnifiedPush** |
+| 월 10,000건 한도 | **설정 가능** (기본값 10,000/사용자/월) |
+
+---
+
+## 아키텍처
+
+```mermaid
+graph TB
+    Sender["📱 발신자<br/>curl / 모니터링 / 스크립트"]
+    Server["🖥️ PushFree 서버 (단일 Go 바이너리)<br/>━━━━━━━━━━━━━━━━━━━━━━━━━━━━<br/>API · Hub · Receipts · Dashboard<br/>SQLite 또는 Postgres"]
+    WS["WebSocket / SSE"]
+    FCM["FCM v1"]
+    UP["UnifiedPush"]
+    Phone["📲 Android"]
+    Desktop["💻 데스크톱"]
+
+    Sender -->|"POST /1/messages.json"| Server
+    Server --> WS
+    Server --> FCM
+    Server --> UP
+    WS --> Phone
+    WS --> Desktop
+    FCM --> Phone
+    UP --> Phone
+
+    style Server fill:#4A90D9,color:#fff,stroke:#357abd
+    style Sender fill:#3DDC84,color:#000
+    style Phone fill:#3DDC84,color:#000
+    style Desktop fill:#DEA584,color:#000
+```
+
+단일 Go 바이너리가 모든 것을 처리합니다 — 외부 의존성 없이, cgo 없이, 하나의 실행 파일로.
+
+---
 
 ## 빠른 시작
 
-### 바이너리 준비
+### 1. 서버 실행 (30초)
 
-**사전 빌드된 바이너리 (권장).** [최신 릴리스](https://github.com/MovieHolic-Plex/pushfree/releases)에서
-해당 플랫폼의 정적 바이너리를 내려받아 실행 권한을 주세요. 서버는 순수 Go라 cgo도,
-런타임 의존성도 없습니다. 에셋 이름: `pushfree-linux-amd64`,
-`pushfree-linux-arm64`, `pushfree-darwin-arm64`, `pushfree-windows-amd64.exe`.
-
-```sh
-# Linux / macOS (아래는 간결함을 위해 이름을 줄여 표기):
-chmod +x pushfree-linux-amd64
-# Windows: pushfree-windows-amd64.exe 를 실행
-```
-
-**소스에서 빌드** (Go 1.26 이상 툴체인 필요):
-
-```sh
-cd server
-go build -o pushfree ./cmd/pushfree
-```
-
-### 서버 실행
-
-```sh
-./pushfree   # Windows: pushfree-windows-amd64.exe   — 기본적으로 :2586에서 수신
-```
-
-**부팅에 설정 파일은 필요하지 않습니다.** `-config` 파일과 `PUSHFREE_*` 환경변수가
-없으면 서버는 `:2586`에서 HTTP로 서비스하고 데이터는 로컬 `pushfree.db` SQLite
-파일에 저장합니다. TOML 설정 파일을 제공하는 경우 엄격하게 강제되는 키는
-`version = 1`(스키마 버전, 다른 값은 시작 시 거부됨)뿐이며, `tls-cert-file` /
-`tls-key-file`은 둘 다 설정하거나 둘 다 비워야 합니다. 나머지 모든 키는 기본값이
-있어 선택 사항입니다 ([docs/configuration.md](docs/configuration.md) 참고). 운영
-환경에서는 안정적인 `auth-secret`(또는 `PUSHFREE_AUTH_SECRET`)을 설정하세요.
-비워두면 프로세스마다 무작위 비밀키가 생성되어 **재시작 때마다 모든 세션이
-무효화됩니다**.
-
-```sh
-curl -sf http://localhost:2586/health   # -> {"status":"ok"}
-```
-
-### 관리자 계정 만들기
-
-CLI 플래그, 환경변수, 별도의 관리자 생성 엔드포인트는 없습니다. **첫 번째**
-`POST /v1/accounts` 가입 요청이 서버 측에서 `role="admin"`으로 지정됩니다(insert
-내부의 원자적 사용자 수 검사). 이후의 모든 가입은 일반 사용자입니다.
-
-```sh
-curl -sf -X POST http://localhost:2586/v1/accounts \
-  -H 'Content-Type: application/json' \
-  -d '{"email":"you@example.com","password":"correct-horse"}'
-# -> {"status":1,"user_key":"<30자 키>"}   (비밀번호는 8자 이상이어야 합니다)
-```
-
-### 로그인하고 메시지 보내기
-
-```sh
-# 로그인 (세션 쿠키 설정) 하고 앱 토큰을 만듭니다.
-curl -sc cookies.txt -X POST http://localhost:2586/v1/accounts/login \
-  -H 'Content-Type: application/json' \
-  -d '{"email":"you@example.com","password":"correct-horse"}'
-TOKEN=$(curl -sb cookies.txt -X POST http://localhost:2586/v1/apps \
-  -H 'Content-Type: application/json' -d '{"name":"monitoring"}' | sed -E 's/.*"token":"([^"]+)".*/\1/')
-USERKEY=$(curl -sb cookies.txt http://localhost:2586/v1/accounts/me | sed -E 's/.*"user_key":"([^"]+)".*/\1/')
-
-# 메시지 전송 (Pushover 호환).
-curl -sf -X POST http://localhost:2586/1/messages.json \
-  -d "token=$TOKEN" -d "user=$USERKEY" -d "message=hello from pushfree"
-```
-
-### TLS
-
-두 가지 옵션 중 하나를 선택하세요 (자세한 내용은
-[docs/self-hosting.md](docs/self-hosting.md)):
-
-- **리버스 프록시가 TLS를 종료 (권장)** — `tls-cert-file`과 `tls-key-file`을
-  비워 두면(기본값) 서버는 일반 HTTP로 서비스하고, TLS 종료 리버스 프록시(Caddy,
-  nginx 등) 뒤에 둡니다.
-- **내장 TLS** — `tls-cert-file`과 `tls-key-file` **둘 다** 설정합니다 (또는
-  `PUSHFREE_TLS_CERT_FILE` / `PUSHFREE_TLS_KEY_FILE` 환경변수). 하나만 설정하면
-  시작 시 에러입니다.
-
-### Docker
-
-멀티 스테이지 distroless 이미지와 `deploy/docker-compose.yml`(서버, `postgres`
-프로필을 통한 선택적 Postgres 서비스 포함)을 제공합니다. 이미지 빌드는
-`server/Dockerfile`, compose 파일은 `deploy/docker-compose.yml`에 있습니다.
-빌드 후 실행:
-
+**Docker (권장):**
 ```sh
 docker build -t pushfree server/
 docker compose -f deploy/docker-compose.yml up -d
-curl -sf localhost:2586/health   # -> {"status":"ok"}
+curl localhost:2586/health   # → {"status":"ok"}
 ```
 
-리버스 프록시, 백업, Postgres 옵션은
-[docs/self-hosting.md](docs/self-hosting.md)를 참고하세요.
+**바이너리 직접 실행:**
+```sh
+# 릴리스에서 다운로드 또는 직접 빌드
+cd server && go build -o pushfree ./cmd/pushfree
+./pushfree                    # ← 설정 없이 :2586에서 실행
+```
 
-## 기능
+### 2. 첫 메시지 보내기
 
-실제로 구현된 기능입니다 (각 항목은 완료된 계획 항목에 대응하며, 계약
-세부사항은 [docs/](docs/)를 참고하세요):
+```sh
+# 관리자 계정 생성 (첫 가입자가 자동으로 admin)
+curl -X POST localhost:2586/v1/accounts \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"me@example.com","password":"correct-horse"}'
 
-- **Pushover 호환 전송 API** — 전체 필드 계약(메시지/제목/URL 길이 제한은
-  UTF-8 rune 단위, 우선순위 `-2..2`, `html`/`monospace` 상호 배타, 단일
-  첨부파일 <= 5 MiB, `ttl`, `tags`, `callback`, `encrypted`)을 갖춘
-  `POST /1/messages.json`. `server/internal/api/messages.go`
-- **계정 및 세션** — 자유로운 가입, 첫 계정이 관리자, argon2id
-  비밀번호(RFC 9106), HMAC 서명 세션 쿠키, 방해 금지 시간 설정.
-  `server/internal/api/accounts.go`, `server/internal/api/security.go`
-- **앱 토큰 및 속도제한 헤더** — `POST/GET/DELETE /v1/apps`; 모든 `/1/*`
-  응답에 `X-Limit-App-Limit/Remaining/Reset` 포함.
-  `server/internal/api/apps.go`, `server/internal/api/applimit.go`
-- **월간 할당량** — 사용자당 월 10,000건 전송, America/Chicago 기준 00:00에
-  리셋, `GET /1/apps/limits.json`, 쓰기 전 429 게이트.
-  `server/internal/api/quota.go`, `server/internal/quota/quota.go`
-- **다중 사용자 팬아웃 및 그룹** — 쉼표로 구분된 `user` 목록(키 50개 이하),
-  전달 그룹(CRUD), 실제 수신자마다 할당량 1단위 부여.
-  `server/internal/api/groups.go`
-- **긴급(우선순위 2) 영수증** — 상태 머신, 내구성 재시도 스케줄러
-  (최소 30초, 만료 상한 3시간, 최대 50회 시도 상한), 크래시 복구 타이머,
-  ack, cancel, cancel-by-tag, 7일 조회 기간, GC. `server/internal/receipts/`,
-  `server/internal/api/receipts.go`, `server/internal/api/cancel.go`
-- **콜백 워커** — ack 시 영수증 JSON 웹훅, 2xx 외 응답에 60초 재시도,
-  SSRF 허용 목록(loopback/link-local/RFC1918/ULA는 기본 차단).
-  `server/internal/callbacks/worker.go`
-- **실시간 허브** — `since` 커서 기반 재생을 지원하는 WebSocket 및 SSE,
-  45초 keepalive, 기기 등록(`POST /1/devices/login.json`, SHA-256 비밀키).
-  `server/internal/hub/`
-- **전달 채널** — WS/SSE(일급 지원), 선택적 FCM v1(환경변수 게이트),
-  UnifiedPush 디스트리뷰터. `server/internal/fcm/`, `server/internal/up/`
-- **방해 금지 시간** — `priority <= 0`인 메시지는 서버 측에서 보류,
-  `priority >= 1`은 우회. `server/internal/quiethours/`
-- **구독** — 코드 + 앱별 동적 키 + 마이그레이션.
-  `server/internal/api/subscriptions.go`
-- **종단간 암호화(E2EE)** — GZIP/AES-256-CBC/HMAC 필드를 불투명하게 저장하며,
-  서버는 절대 복호화하지 않습니다. `server/internal/e2ee/`
-- **검증 및 사운드** — `POST /1/users/validate.json`, `GET /1/sounds.json`
-  (내장 사운드 23종). `server/internal/api/validate.go`,
-  `server/internal/api/sounds.go`
-- **관측 가능성** — `GET /metrics`(Prometheus) + 구조화된 요청 로깅.
-  `server/internal/metrics/`
-- **보존 및 종료** — 30일 메시지 보존, 3일 첨부파일 BLOB 보존, TTL 폐기,
-  WAL 체크포인트를 동반한 정상 종료. `server/internal/retention/`
-- **내장 대시보드** — `go:embed`로 `/admin/`에서 서비스되는 Next.js 정적
-  익스포트(앱, 할당량, 실시간 SSE 메시지 뷰, 영수증, 방해 금지 시간).
-  `server/internal/webmount/`, `web/`
-- **클라이언트** — Android(WS/FCM/UnifiedPush 전송 방식, Android 14
-  풀스크린 인텐트 흐름을 갖춘 긴급 채널, ack 아웃박스), Tauri 2 데스크톱
-  (직접 WS, 중복 제거, ack). `android/`, `desktop/`
-- **이중 데이터베이스** — SQLite(기본값, 순수 Go `modernc.org/sqlite`)와
-  Postgres(`pgx/v5`)가 동일한 store 인터페이스 뒤에 위치합니다.
-  [docs/POSTGRES.md](docs/POSTGRES.md) 참고.
+# 로그인 + 앱 토큰 발급
+curl -sc c.txt -X POST localhost:2586/v1/accounts/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"me@example.com","password":"correct-horse"}'
+TOKEN=$(curl -sb c.txt -X POST localhost:2586/v1/apps \
+  -H 'Content-Type: application/json' -d '{"name":"grafana"}' | sed -E 's/.*"token":"([^"]+)".*/\1/')
+UK=$(curl -sb c.txt localhost:2586/v1/accounts/me | sed -E 's/.*"user_key":"([^"]+)".*/\1/')
 
-## 문서
+# 전송! (Pushover와 동일한 API)
+curl -X POST localhost:2586/1/messages.json \
+  -d "token=$TOKEN" -d "user=$UK" \
+  -d "message=Build passed ✅" -d "priority=1"
+```
 
-- [시작하기](docs/getting-started.md)
-- [설정](docs/configuration.md)
-- [HTTP API 레퍼런스](docs/api.md)
-- [클라이언트(Android, 데스크톱, 대시보드)](docs/clients.md)
-- [셀프 호스팅(TLS, 백업, Postgres)](docs/self-hosting.md)
-- [Postgres 백엔드](docs/POSTGRES.md)
-- [Pushover API 호환성 매트릭스](docs/API-COMPAT.md)
+### 3. 클라이언트 연결
+
+- **Android**: [릴리스 APK](https://github.com/MovieHolic-Plex/pushfree/releases) 다운로드 → 서버 URL 입력 → WebSocket/FCM 자동 연결
+- **데스크톱**: `cd desktop && cargo tauri build` → 시스템 트레이에서 알림 수신
+- **대시보드**: 브라우저로 `http://your-server:2586/admin/` 접속
+
+---
+
+## 주요 기능
+
+### 🚀 Pushover 완전 호환
+`POST /1/messages.json`의 모든 필드를 지원합니다 — 우선순위 `-2~2`, 첨부파일, HTML/모노스페이스, 태그, 콜백, E2EE 암호화. 기존 Pushover 통합은 URL만 바꾸면 됩니다.
+
+### 🔔 긴급(우선순위 2) 알림
+내구성 재시도 스케줄러(30초 간격, 3시간 만료, 최대 50회)가 사용자가 확인할 때까지 반복 알림을 보냅니다. 영수증 상태 머신, cancel-by-tag, 웹훅 콜백을 지원합니다.
+
+### 📡 다중 전송 채널
+| 채널 | 용도 | 특징 |
+|------|------|------|
+| **WebSocket** | 일급 전송 | `since` 커서 재생, 45초 keepalive |
+| **SSE** | 브라우저/폴백 | Pushover에는 없는 PushFree 고유 기능 |
+| **FCM v1** | Android 백그라운드 | 선택적, 환경변수로 활성화 |
+| **UnifiedPush** | Google Play 없는 Android | 자체 디스트리뷰터 |
+
+### 🔒 종단간 암호화 (E2EE)
+메시지 제목/본문을 AES-256-CBC + HMAC로 암호화 — 서버는 암호문만 저장하고 절대 복호화하지 않습니다. Go, Kotlin, Rust 세 플랫폼이 동일한 벡터로 상호 검증됩니다.
+
+### 🗄️ 이중 데이터베이스
+- **SQLite** (기본값) — 설정 없이 작동, 순수 Go 드라이버, 단일 파일
+- **Postgres** — `db-url` 설정 한 줄로 전환, `pgx/v5` 드라이버
+
+### 📊 내장 대시보드
+Next.js 정적 익스포트가 Go 바이너리에 `go:embed`로 내장됩니다. 앱 토큰 관리, 실시간 SSE 메시지 뷰, 할당량 확인, 방해 금지 시간 설정을 브라우저에서 바로 사용할 수 있습니다.
+
+### 🌙 방해 금지 시간
+`priority <= 0` 메시지를 설정된 시간 동안 보류하고, `priority >= 1`은 방해 금지 시간을 우회합니다.
+
+---
 
 ## 프로젝트 구조
 
 ```text
-server/    Go server (single binary): API, hub, receipts, store, dashboard embed
-android/   native Android client (WS / FCM / UnifiedPush)
-desktop/   Tauri 2 desktop client (direct WS)
-web/       Next.js static-export admin dashboard (embedded into the binary)
-deploy/    docker-compose and deployment assets
-docs/      documentation set
+pushfree/
+├── server/          Go 서버 (단일 바이너리)
+│   ├── cmd/pushfree/           진입점
+│   └── internal/
+│       ├── api/                HTTP API (Pushover 호환 /1/* + 관리 /v1/*)
+│       ├── hub/                실시간 WebSocket/SSE 팬아웃
+│       ├── receipts/           긴급 영수증 상태 머신
+│       ├── timers/             내구성 재시도 타이머 엔진
+│       ├── callbacks/          웹훅 콜백 워커
+│       ├── store/sqlite/       SQLite 백엔드
+│       ├── store/postgres/     Postgres 백엔드
+│       ├── e2ee/               종단간 암호화
+│       ├── fcm/                FCM v1 전송 (선택)
+│       ├── up/                 UnifiedPush 디스트리뷰터
+│       └── webmount/           대시보드 go:embed 서빙
+├── android/         네이티브 Android 클라이언트 (Kotlin)
+├── desktop/         Tauri 2 데스크톱 클라이언트 (Rust)
+├── web/             Next.js 관리자 대시보드 (정적 익스포트)
+├── deploy/          Docker Compose 및 배포 자산
+└── docs/            문서
 ```
+
+---
+
+## 기술 스택
+
+| 레이어 | 기술 |
+|--------|------|
+| **서버** | Go 1.26 · `net/http` · `modernc.org/sqlite` · `pgx/v5` |
+| **Android** | Kotlin · Jetpack Compose · Room · WorkManager · WebSocket |
+| **데스크톱** | Rust · Tauri 2 · `tokio-tungstenite` |
+| **대시보드** | Next.js 15 · React · TailwindCSS · 정적 익스포트 |
+| **배포** | Docker (distroless) · GoReleaser · GitHub Actions |
+
+---
+
+## 문서
+
+- [🚀 시작하기](docs/getting-started.md)
+- [⚙️ 설정 레퍼런스](docs/configuration.md)
+- [📡 HTTP API 레퍼런스](docs/api.md)
+- [🖥️ 셀프 호스팅 가이드 (TLS, 백업, Postgres)](docs/self-hosting.md)
+- [🔄 Pushover 호환성 매트릭스](docs/API-COMPAT.md)
+- [🏗️ 아키텍처 상세](ARCHITECTURE.md)
+
+---
+
+## 기여
+
+버그 리포트, 기능 제안, 풀 리퀘스트를 환영합니다. [CONTRIBUTING.md](CONTRIBUTING.md)를 참고하세요.
+
+```sh
+# 서버 테스트
+cd server && go test ./...
+
+# Android 테스트
+cd android && ./gradlew testPlayDebugUnitTest
+
+# 데스크톱 테스트
+cd desktop && cargo test
+```
+
+---
 
 ## 라이선스
 
-[Apache License 2.0](LICENSE)에 따라 라이선스됩니다.
+[Apache License 2.0](LICENSE) © PushFree Contributors

@@ -225,7 +225,7 @@ impl WsController {
         };
 
         let sink: Arc<dyn notify::NotifySink> = Arc::new(notify::ToastSink::new(app.clone()));
-        let ack_client = match notify::HttpAckClient::new(cfg.http_base.clone(), cfg.secret.clone())
+        let ack_client = match notify::HttpAckClient::new(cfg.http_base.clone(), cfg.device_id.clone(), cfg.secret.clone())
         {
             Ok(c) => Arc::new(c),
             Err(err) => {
@@ -256,7 +256,7 @@ impl WsController {
             // inside the WS task so that when this task is aborted the pipeline
             // (and its ack sender) is dropped, the queue closes, and the
             // reporter exits naturally.
-            let (ack_tx, ack_rx) = tokio::sync::mpsc::channel::<i64>(256);
+            let (ack_tx, ack_rx) = tokio::sync::mpsc::channel::<String>(256);
             let reporter = notify::AckReporter::new(ack_rx, ack_client, retry_delay);
             tauri::async_runtime::spawn(reporter.run());
 

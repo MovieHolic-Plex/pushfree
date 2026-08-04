@@ -73,7 +73,7 @@ class AckOutboxTest {
     fun success_marks_acked_and_dismisses_notification() {
         val notifId = seed(receiptId = "rec-success", msgId = MSG_ID)
         postStubNotification(notifId)
-        AckOutboxServices.poster = AckPoster { _, _, _ -> AckPostResult.Success }
+        AckOutboxServices.poster = AckPoster { _, _, _, _ -> AckPostResult.Success }
 
         val result = runBlocking { buildWorker("rec-success", MSG_ID, notifId).doWork() }
 
@@ -87,7 +87,7 @@ class AckOutboxTest {
     fun transient_failure_requeues_and_keeps_pending() {
         val notifId = seed(receiptId = "rec-retry", msgId = MSG_ID)
         postStubNotification(notifId)
-        AckOutboxServices.poster = AckPoster { _, _, _ ->
+        AckOutboxServices.poster = AckPoster { _, _, _, _ ->
             AckPostResult.TransientFailure(500, "server error")
         }
 
@@ -103,7 +103,7 @@ class AckOutboxTest {
     fun permanent_404_fails_and_leaves_notification_dismissable() {
         val notifId = seed(receiptId = "rec-404", msgId = MSG_ID)
         postStubNotification(notifId)
-        AckOutboxServices.poster = AckPoster { _, _, _ -> AckPostResult.PermanentFailure(404) }
+        AckOutboxServices.poster = AckPoster { _, _, _, _ -> AckPostResult.PermanentFailure(404) }
 
         val result = runBlocking { buildWorker("rec-404", MSG_ID, notifId).doWork() }
 
@@ -116,7 +116,7 @@ class AckOutboxTest {
     @Test
     fun offline_ack_is_enqueued_awaiting_network() {
         val notifId = seed(receiptId = "rec-offline", msgId = MSG_ID)
-        AckOutboxServices.poster = AckPoster { _, _, _ -> AckPostResult.Success }
+        AckOutboxServices.poster = AckPoster { _, _, _, _ -> AckPostResult.Success }
 
         val name = AckOutbox.enqueue(ctx, "rec-offline", MSG_ID, notifId)
 
@@ -132,7 +132,7 @@ class AckOutboxTest {
     fun enqueued_work_drains_when_network_constraint_met() {
         val notifId = seed(receiptId = "rec-drain", msgId = MSG_ID)
         postStubNotification(notifId)
-        AckOutboxServices.poster = AckPoster { _, _, _ -> AckPostResult.Success }
+        AckOutboxServices.poster = AckPoster { _, _, _, _ -> AckPostResult.Success }
 
         val request = AckOutbox.buildRequest("rec-drain", MSG_ID, notifId)
         val wm = WorkManager.getInstance(ctx)

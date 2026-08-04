@@ -18,11 +18,12 @@ import (
 // helpers (applimit.go) that todo 8's /1/* send path attaches to its
 // responses, and the app-token validation helper the send path uses for auth.
 type Accounts struct {
-	repos      store.Repos
-	authSecret []byte
-	ttl        time.Duration
-	logger     *slog.Logger
-	ackHook    AckHook // nil until todo 25's callback worker is wired (SetAckHook)
+	repos         store.Repos
+	authSecret    []byte
+	ttl           time.Duration
+	logger        *slog.Logger
+	ackHook       AckHook       // nil until todo 25's callback worker is wired (SetAckHook)
+	retrySeeder   RetrySeeder   // nil until todo 21/22 wiring (SetRetrySeeder)
 	livePublisher LivePublisher // nil until the realtime hub is wired (SetLivePublisher)
 }
 
@@ -76,6 +77,11 @@ func (a *Accounts) Register(mux *http.ServeMux) {
 	// attaches the X-Limit-App-* header convention (neither consumes quota).
 	mux.HandleFunc("GET /1/receipts/{receipt}", a.limitWrap(a.receiptHandler))
 	mux.HandleFunc("POST /1/receipts/{receipt}/acknowledge.json", a.limitWrap(a.ackHandler))
+
+	// FCM token registration (device-secret auth). Android's FcmTokenRegistrar
+	// POSTs here to store/refresh its Firebase Cloud Messaging token so the
+	// FCM delivery channel can push to the device.
+	mux.HandleFunc("POST /1/devices/fcm_token.json", a.fcmTokenHandler)
 
 	// Monthly quota usage endpoint (todo 10). Read-only, app-token auth via
 	// the ?token= query; returns {count,limit,remaining,reset} for the token
