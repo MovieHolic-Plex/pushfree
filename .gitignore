@@ -2,6 +2,15 @@
 
 # --- Orchestration state (never commit) ---
 .omo/
+# --- Local runtime credentials and databases ---
+*.db
+*.db-wal
+*.db-shm
+cookies.txt
+ws_listener.mjs
+handoff.md
+
+
 
 # --- Go ---
 *.exe
@@ -42,3 +51,19 @@ yarn-error.log*
 *~
 .DS_Store
 Thumbs.db
+
+
+# --- Local research and tool scratch ---
+.senpi/
+android/.kotlin/
+/attack_report.md
+/economics_licensing_report.md
+/pushfree-report.html
+/ck_server_*.go
+/gotify_*.go
+/ntfy_*.go
+/ntfy_*.md
+/pushbits_*.go
+/research/
+/po_research/
+/nul
