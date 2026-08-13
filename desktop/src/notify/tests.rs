@@ -58,14 +58,6 @@ struct MockAckClient {
 }
 
 impl MockAckClient {
-    /// Always succeeds (used by the dedup test).
-    fn success() -> Self {
-        MockAckClient {
-            scripted: Mutex::new(VecDeque::new()),
-            calls: Mutex::new(Vec::new()),
-        }
-    }
-
     /// Returns `outcomes` in order, then `Ok`.
     fn sequence(outcomes: Vec<AckOutcome>) -> Self {
         MockAckClient {

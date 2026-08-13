@@ -424,6 +424,11 @@ pub enum HandleOutcome {
 pub struct Pipeline {
     dedup: Dedup,
     sink: Arc<dyn NotifySink>,
+    // Reserved seam for the pending user-ack UI: emergency receipts are NOT
+    // auto-acked (Pushover semantics), so nothing sends on this channel until
+    // the inbox gets an explicit confirm button. Kept wired so that feature
+    // lands without re-plumbing the queue.
+    #[allow(dead_code)]
     ack_tx: tokio::sync::mpsc::Sender<String>,
     /// Optional E2EE key (64-hex). When present, encrypted message fields are
     /// decrypted before the notification is shown (todo 44); on any failure a
