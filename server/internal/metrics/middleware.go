@@ -50,22 +50,26 @@ func (w *statusWriter) Write(b []byte) (int, error) {
 	return w.ResponseWriter.Write(b)
 }
 
+// Flush implements http.Flusher so streaming handlers (SSE at GET /1/sse)
+// see the wrapper as flush-capable. net/http's response implements Flusher,
+// so the assertion on the embedded writer succeeds in production; without
+// this method a direct w.(http.Flusher) assertion on statusWriter fails and
+// the SSE handler answers 500 "streaming unsupported".
+func (w *statusWriter) Flush() {
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
 // Unwrap exposes the underlying http.ResponseWriter so capability-sensitive
-// callers can reach interfaces statusWriter does not implement itself:
-// http.Hijacker (required by the coder/websocket upgrade at GET /1/ws) and
-// http.Flusher (required by the SSE streaming handler). Without it,
-// websocket.Accept finds neither Hijacker nor an Unwrapper on statusWriter
-// and returns HTTP 501, breaking every live WS connection. The metrics
-// wrapper still observes WriteHeader/Write; a hijacked WS writes its upgrade
-// response through the raw conn, which statusOrZero reports honestly as 0.
-// Unwrap exposes the underlying http.ResponseWriter so capability-sensitive
-// callers can reach interfaces statusWriter does not implement itself:
-// http.Hijacker (required by the coder/websocket upgrade at GET /1/ws) and
-// http.Flusher (required by the SSE streaming handler). Without it,
-// websocket.Accept finds neither Hijacker nor an Unwrapper on statusWriter
-// and returns HTTP 501, breaking every live WS connection. The metrics
-// wrapper still observes WriteHeader/Write; a hijacked WS writes its upgrade
-// response through the raw conn, which statusOrZero reports honestly as 0.
+// callers can reach interfaces statusWriter does not implement itself,
+// notably http.Hijacker (required by the coder/websocket upgrade at
+// GET /1/ws). Without it, websocket.Accept finds neither Hijacker nor an
+// Unwrapper on statusWriter and returns HTTP 501, breaking every live WS
+// connection. The metrics wrapper still observes WriteHeader/Write; a
+// hijacked WS writes its upgrade response through the raw conn, which
+// statusOrZero reports honestly as 0. http.Flusher is implemented directly
+// via Flush above.
 func (w *statusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
 // RequestLogger returns middleware that assigns each request a stable

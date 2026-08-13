@@ -319,3 +319,29 @@ func TestRequestLoggerNilLoggerDoesNotPanic(t *testing.T) {
 		t.Error("nil logger path did not set X-Request-ID")
 	}
 }
+
+// TestRequestLoggerWrapperSupportsFlushing is the regression test for the
+// SSE 500 bug: ServeSSE asserts w.(http.Flusher) on the writer handed to it,
+// so the logging middleware's wrapper must implement http.Flusher and
+// delegate to the underlying writer. Without Flush on statusWriter every
+// live SSE connect answered 500 "streaming unsupported".
+func TestRequestLoggerWrapperSupportsFlushing(t *testing.T) {
+	b := NewBundle()
+	h := RequestLogger(nil, b.Metrics)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			t.Error("wrapped writer does not implement http.Flusher")
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		if _, err := w.Write([]byte("data: x\n\n")); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		flusher.Flush()
+	}))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/1/sse", nil))
+	if !rec.Flushed {
+		t.Error("Flush did not reach the underlying ResponseWriter")
+	}
+}
