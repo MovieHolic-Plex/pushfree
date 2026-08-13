@@ -18,15 +18,61 @@ pub mod ws;
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use serde::Serialize;
 
 use tauri::{
     menu::{IsMenuItem, Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Manager,
+    Emitter, Manager,
 };
 use tauri_plugin_autostart::ManagerExt;
 
 use settings::Settings;
+
+/// Upper bound on the in-memory inbox history replayed to a freshly loaded
+/// webview.
+const HISTORY_LIMIT: usize = 100;
+
+/// A message surfaced in the webview inbox. Built from the (possibly E2EE-
+/// decrypted) [`ws::ServerMessage`] so encrypted payloads render their
+/// plaintext, never the ciphertext blobs.
+#[derive(Clone, Serialize)]
+struct UiMessage {
+    id: i64,
+    priority: i32,
+    title: String,
+    message: String,
+    url: String,
+    url_title: String,
+    monospace: bool,
+    tag: String,
+    timestamp: i64,
+}
+
+impl From<&ws::ServerMessage> for UiMessage {
+    fn from(m: &ws::ServerMessage) -> Self {
+        UiMessage {
+            id: m.id,
+            priority: m.priority,
+            title: m.title.clone(),
+            message: m.message.clone(),
+            url: m.url.clone(),
+            url_title: m.url_title.clone(),
+            monospace: m.monospace,
+            tag: m.tag.clone(),
+            timestamp: m.timestamp,
+        }
+    }
+}
+
+/// Connection/config snapshot handed to a freshly loaded webview.
+#[derive(Serialize)]
+struct UiStatus {
+    configured: bool,
+    server_url: String,
+    /// Most recent messages first.
+    history: Vec<UiMessage>,
+}
 
 /// Entry point invoked by the binary `main`.
 pub fn run() {
@@ -40,6 +86,8 @@ pub fn run() {
             cmd_get_settings,
             cmd_save_settings,
             cmd_reconnect_ws,
+            cmd_get_status,
+            cmd_clear_history,
         ])
         .setup(|app| {
             // --- Config sanity check -----------------------------------------
@@ -188,12 +236,15 @@ impl SettingsStore {
 /// takes effect immediately without restarting the app.
 pub struct WsController {
     task: Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
+    /// Received messages (oldest first) replayed to new webviews.
+    history: Arc<Mutex<Vec<UiMessage>>>,
 }
 
 impl WsController {
     pub fn new() -> Self {
         WsController {
             task: Mutex::new(None),
+            history: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -221,6 +272,7 @@ impl WsController {
                 "[pushfree] incomplete server config (server_url/device_id/secret); \
                  WS loop not started"
             );
+            let _ = app.emit("pf-status", serde_json::json!({ "state": "unconfigured" }));
             return;
         };
 
@@ -230,6 +282,7 @@ impl WsController {
             Ok(c) => Arc::new(c),
             Err(err) => {
                 eprintln!("[pushfree] ack client config error: {err}");
+                let _ = app.emit("pf-status", serde_json::json!({ "state": "error" }));
                 return;
             }
         };
@@ -243,6 +296,7 @@ impl WsController {
             Ok(c) => Arc::new(c),
             Err(err) => {
                 eprintln!("[pushfree] WS client config error: {err}");
+                let _ = app.emit("pf-status", serde_json::json!({ "state": "error" }));
                 return;
             }
         };
@@ -251,6 +305,24 @@ impl WsController {
         // Hoist the E2EE key clone before the 'static spawned task: the task
         // cannot borrow `settings` (a function-parameter reference).
         let e2ee_key = settings.e2ee_key.clone();
+
+        // Replay the current inbox to the (re)loading webview and announce
+        // the loop restart.
+        let history: Vec<UiMessage> = self
+            .history
+            .lock()
+            .expect("history lock poisoned")
+            .iter()
+            .rev()
+            .cloned()
+            .collect();
+        let _ = app.emit("pf-history", &history);
+        let _ = app.emit(
+            "pf-status",
+            serde_json::json!({ "state": "connecting", "attempt": 0 }),
+        );
+        let history_for_drive = self.history.clone();
+        let app_for_drive = app.clone();
         let handle = tauri::async_runtime::spawn(async move {
             // Ack reporter: drains the pipeline's ack queue with retry. Spawned
             // inside the WS task so that when this task is aborted the pipeline
@@ -270,8 +342,43 @@ impl WsController {
             let (tx, mut rx) = tokio::sync::mpsc::channel::<ws::Event>(64);
             let drive = tauri::async_runtime::spawn(async move {
                 while let Some(ev) = rx.recv().await {
-                    if let ws::Event::Message(m) = ev {
-                        pipeline_for_drive.handle(&m).await;
+                    match ev {
+                        ws::Event::Message(m) => {
+                            let ui = UiMessage::from(&m);
+                            {
+                                let mut h = history_for_drive
+                                    .lock()
+                                    .expect("history lock poisoned");
+                                h.push(ui.clone());
+                                if h.len() > HISTORY_LIMIT {
+                                    let drop_n = h.len() - HISTORY_LIMIT;
+                                    h.drain(..drop_n);
+                                }
+                            }
+                            let _ = app_for_drive.emit("pf-message", &ui);
+                            pipeline_for_drive.handle(&m).await;
+                        }
+                        ws::Event::Open { .. } | ws::Event::Keepalive => {
+                            let _ = app_for_drive
+                                .emit("pf-status", serde_json::json!({ "state": "open" }));
+                        }
+                        ws::Event::Connecting { attempt } => {
+                            let _ = app_for_drive.emit(
+                                "pf-status",
+                                serde_json::json!({ "state": "connecting", "attempt": attempt }),
+                            );
+                        }
+                        ws::Event::Disconnected { close_code, .. } => {
+                            let _ = app_for_drive.emit(
+                                "pf-status",
+                                serde_json::json!({ "state": "disconnected", "close_code": close_code }),
+                            );
+                        }
+                        ws::Event::ReadTimeout { .. } => {
+                            let _ = app_for_drive
+                                .emit("pf-status", serde_json::json!({ "state": "timeout" }));
+                        }
+                        _ => {}
                     }
                 }
             });
@@ -334,6 +441,35 @@ fn cmd_reconnect_ws(
     let config_dir = store.config_dir.clone();
     ws.restart(&app, &s, &config_dir);
     Ok(())
+}
+
+/// Connection/config snapshot for a freshly loaded webview: whether the
+/// settings are complete plus the most recent received messages.
+#[tauri::command]
+fn cmd_get_status(
+    store: tauri::State<'_, SettingsStore>,
+    ws: tauri::State<'_, WsController>,
+) -> UiStatus {
+    let s = store.get();
+    UiStatus {
+        configured: build_runtime_config(&s).is_some(),
+        server_url: s.server_url,
+        history: ws
+            .history
+            .lock()
+            .expect("history lock poisoned")
+            .iter()
+            .rev()
+            .cloned()
+            .collect(),
+    }
+}
+
+/// Drop the in-memory inbox history. The on-disk dedup log is untouched, so
+/// already-seen sends stay deduplicated.
+#[tauri::command]
+fn cmd_clear_history(ws: tauri::State<'_, WsController>) {
+    ws.history.lock().expect("history lock poisoned").clear();
 }
 
 // ---------------------------------------------------------------------------

@@ -1,12 +1,436 @@
 <!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>PushFree</title>
-  </head>
-  <body>
-    <h1>PushFree</h1>
-    <p>Desktop client scaffold. Real UI arrives in a later todo.</p>
-  </body>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>PushFree</title>
+<style>
+  :root {
+    --bg: #0e1116;
+    --panel: #151a21;
+    --card: #1a212b;
+    --card-hover: #1f2833;
+    --border: #2a3441;
+    --border-soft: #222b36;
+    --text: #e6edf3;
+    --muted: #8b98a5;
+    --faint: #5c6a78;
+    --accent: #4c9aff;
+    --accent-soft: rgba(76, 154, 255, 0.14);
+    --ok: #3fb950;
+    --warn: #d29922;
+    --danger: #f85149;
+    --p2: #f85149;
+    --p1: #d29922;
+    --p0: #4c9aff;
+    --pn: #5c6a78;
+    --radius: 10px;
+    --mono: "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+    --font: "Segoe UI Variable", "Segoe UI", -apple-system, "Malgun Gothic", sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 13px/1.5 var(--font);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    user-select: none;
+  }
+
+  /* ---------- header ---------- */
+  header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 14px;
+    background: linear-gradient(180deg, #171d26, var(--panel));
+    border-bottom: 1px solid var(--border-soft);
+    flex: none;
+  }
+  .logo {
+    width: 28px; height: 28px;
+    border-radius: 8px;
+    background: linear-gradient(135deg, #4c9aff, #2f6fd8);
+    display: grid; place-items: center;
+    box-shadow: 0 2px 8px rgba(47, 111, 216, 0.35);
+    flex: none;
+  }
+  .logo svg { width: 16px; height: 16px; fill: #fff; }
+  .brand { display: flex; flex-direction: column; line-height: 1.2; min-width: 0; }
+  .brand b { font-size: 14px; font-weight: 600; letter-spacing: 0.2px; }
+  .brand span {
+    font-size: 11px; color: var(--muted);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    font-family: var(--mono);
+  }
+  .pill {
+    margin-left: auto;
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 11px; font-weight: 600;
+    border: 1px solid var(--border);
+    background: var(--card);
+    color: var(--muted);
+    flex: none;
+    transition: color .2s, border-color .2s;
+  }
+  .pill .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); flex: none; }
+  .pill.open { color: var(--ok); border-color: rgba(63,185,80,.4); }
+  .pill.open .dot { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
+  .pill.connecting { color: var(--warn); border-color: rgba(210,153,34,.4); }
+  .pill.connecting .dot { background: var(--warn); animation: pulse 1s infinite; }
+  .pill.down { color: var(--danger); border-color: rgba(248,81,73,.4); }
+  .pill.down .dot { background: var(--danger); }
+  @keyframes pulse { 50% { opacity: .35; } }
+
+  /* ---------- feed ---------- */
+  main { flex: 1; overflow-y: auto; padding: 12px 14px; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+  main::-webkit-scrollbar { width: 8px; }
+  main::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+  .empty {
+    height: 100%;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 10px; color: var(--faint); text-align: center; padding: 20px;
+  }
+  .empty .ring {
+    width: 72px; height: 72px; border-radius: 50%;
+    border: 1.5px dashed var(--border);
+    display: grid; place-items: center;
+    animation: spin 24s linear infinite;
+  }
+  .empty .ring svg { width: 28px; height: 28px; fill: var(--faint); animation: spin 24s linear infinite reverse; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .empty b { color: var(--muted); font-size: 13px; font-weight: 600; }
+  .empty p { font-size: 12px; max-width: 260px; }
+
+  .msg {
+    background: var(--card);
+    border: 1px solid var(--border-soft);
+    border-left: 3px solid var(--pn);
+    border-radius: var(--radius);
+    padding: 10px 12px;
+    margin-bottom: 8px;
+    animation: slide-in .25s ease;
+    transition: background .15s;
+  }
+  .msg:hover { background: var(--card-hover); }
+  .msg.p0 { border-left-color: var(--p0); }
+  .msg.p1 { border-left-color: var(--p1); }
+  .msg.p2 { border-left-color: var(--p2); box-shadow: 0 0 12px rgba(248,81,73,.12); }
+  @keyframes slide-in { from { opacity: 0; transform: translateY(-6px); } }
+
+  .msg .top { display: flex; align-items: baseline; gap: 8px; }
+  .msg .title { font-weight: 600; font-size: 13px; flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  .msg .badge {
+    font-size: 10px; font-weight: 700; letter-spacing: .4px;
+    padding: 1px 7px; border-radius: 999px; flex: none;
+    color: var(--pn); background: rgba(92,106,120,.15);
+  }
+  .msg.p0 .badge { color: var(--p0); background: var(--accent-soft); }
+  .msg.p1 .badge { color: var(--p1); background: rgba(210,153,34,.15); }
+  .msg.p2 .badge { color: var(--p2); background: rgba(248,81,73,.15); }
+  .msg .body {
+    margin-top: 4px; color: var(--text);
+    white-space: pre-wrap; overflow-wrap: anywhere;
+    font-size: 12.5px;
+  }
+  .msg .body.mono { font-family: var(--mono); font-size: 12px; }
+  .msg .meta {
+    margin-top: 7px; display: flex; align-items: center; gap: 8px;
+    color: var(--faint); font-size: 11px;
+  }
+  .msg .meta .id { font-family: var(--mono); }
+  .msg .meta a {
+    margin-left: auto; color: var(--accent); text-decoration: none;
+    max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .msg .meta a:hover { text-decoration: underline; }
+
+  /* ---------- footer ---------- */
+  footer {
+    flex: none;
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px 14px;
+    border-top: 1px solid var(--border-soft);
+    background: var(--panel);
+  }
+  footer .count { color: var(--faint); font-size: 11px; margin-right: auto; }
+  button {
+    font: 600 12px var(--font);
+    color: var(--text);
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 6px 12px;
+    cursor: pointer;
+    display: inline-flex; align-items: center; gap: 6px;
+    transition: background .15s, border-color .15s;
+  }
+  button:hover { background: var(--card-hover); border-color: var(--faint); }
+  button:active { transform: translateY(1px); }
+  button svg { width: 13px; height: 13px; fill: currentColor; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.primary:hover { background: #3d8bf0; }
+
+  /* ---------- settings modal ---------- */
+  .overlay {
+    position: fixed; inset: 0;
+    background: rgba(5, 8, 12, 0.6);
+    backdrop-filter: blur(2px);
+    display: none;
+    align-items: center; justify-content: center;
+    z-index: 10;
+  }
+  .overlay.show { display: flex; }
+  .sheet {
+    width: min(400px, calc(100% - 32px));
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    box-shadow: 0 16px 48px rgba(0,0,0,.5);
+    padding: 18px;
+    animation: pop .18s ease;
+  }
+  @keyframes pop { from { opacity: 0; transform: scale(.97); } }
+  .sheet h2 { font-size: 14px; font-weight: 600; margin-bottom: 14px; display: flex; align-items: center; gap: 8px; }
+  .sheet h2 svg { width: 14px; height: 14px; fill: var(--muted); }
+  .field { margin-bottom: 10px; }
+  .field label { display: block; font-size: 11px; font-weight: 600; color: var(--muted); margin-bottom: 4px; }
+  .field input {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    font: 12px var(--mono);
+    padding: 7px 10px;
+    outline: none;
+    transition: border-color .15s;
+  }
+  .field input:focus { border-color: var(--accent); }
+  .field input::placeholder { color: var(--faint); }
+  .check { display: flex; align-items: center; gap: 8px; margin: 12px 0; cursor: pointer; font-size: 12px; color: var(--text); }
+  .check input { accent-color: var(--accent); width: 14px; height: 14px; }
+  .sheet .err { color: var(--danger); font-size: 11px; min-height: 16px; margin-bottom: 6px; }
+  .sheet .row { display: flex; justify-content: flex-end; gap: 8px; }
+
+  /* ---------- toasts ---------- */
+  #toasts { position: fixed; top: 12px; right: 12px; display: flex; flex-direction: column; gap: 8px; z-index: 20; }
+  .toast {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--ok);
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 12px;
+    box-shadow: 0 6px 20px rgba(0,0,0,.4);
+    animation: slide-in .2s ease;
+    max-width: 280px;
+  }
+  .toast.err { border-left-color: var(--danger); }
+</style>
+</head>
+<body>
+  <header>
+    <div class="logo">
+      <svg viewBox="0 0 24 24"><path d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6v-5c0-3.07-1.63-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5S10.5 3.17 10.5 4v.68C7.64 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z"/></svg>
+    </div>
+    <div class="brand">
+      <b>PushFree</b>
+      <span id="server-label">—</span>
+    </div>
+    <div class="pill" id="pill"><span class="dot"></span><span id="pill-text">시작 중…</span></div>
+  </header>
+
+  <main id="feed"></main>
+
+  <footer>
+    <span class="count" id="count"></span>
+    <button id="btn-clear" title="받은 메시지 목록 비우기">
+      <svg viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+      지우기
+    </button>
+    <button id="btn-settings">
+      <svg viewBox="0 0 24 24"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.48.48 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.49.49 0 0 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6A3.6 3.6 0 1 1 12 8.4a3.6 3.6 0 0 1 0 7.2z"/></svg>
+      설정
+    </button>
+  </footer>
+
+  <div class="overlay" id="overlay">
+    <div class="sheet">
+      <h2>
+        <svg viewBox="0 0 24 24"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.48.48 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.49.49 0 0 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6A3.6 3.6 0 1 1 12 8.4a3.6 3.6 0 0 1 0 7.2z"/></svg>
+        서버 설정
+      </h2>
+      <div class="field"><label>서버 URL</label><input id="f-url" placeholder="https://push.example.com" spellcheck="false"></div>
+      <div class="field"><label>Device ID</label><input id="f-device" spellcheck="false"></div>
+      <div class="field"><label>Secret</label><input id="f-secret" type="password" spellcheck="false"></div>
+      <div class="field"><label>E2EE 키 (선택, 64자리 hex)</label><input id="f-key" type="password" spellcheck="false"></div>
+      <label class="check"><input id="f-autolaunch" type="checkbox"> 로그인 시 자동 시작</label>
+      <div class="err" id="f-err"></div>
+      <div class="row">
+        <button id="btn-cancel">취소</button>
+        <button id="btn-save" class="primary">저장</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toasts"></div>
+
+<script>
+"use strict";
+const invoke = (cmd, args) => window.__TAURI__.core.invoke(cmd, args);
+const listen = (ev, cb) => window.__TAURI__.event.listen(ev, cb);
+
+const $ = (id) => document.getElementById(id);
+const feed = $("feed"), pill = $("pill"), pillText = $("pill-text");
+const serverLabel = $("server-label"), countEl = $("count");
+
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+const PRIO = {
+  2: ["p2", "긴급"], 1: ["p1", "중요"], 0: ["p0", "일반"],
+  "-1": ["pn", "낮음"], "-2": ["pn", "낮음"],
+};
+
+let messages = []; // newest first
+
+function relTime(ts) {
+  if (!ts) return "";
+  const d = new Date(ts * 1000);
+  const diff = Math.floor(Date.now() / 1000) - ts;
+  if (diff < 60) return "방금";
+  if (diff < 3600) return Math.floor(diff / 60) + "분 전";
+  if (diff < 86400) return Math.floor(diff / 3600) + "시간 전";
+  return d.toLocaleDateString("ko-KR", { month: "short", day: "numeric" }) +
+    " " + d.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" });
+}
+
+// Only http(s) URLs become clickable links. A sender-controlled scheme like
+// javascript: would otherwise execute in the webview context (withGlobalTauri
+// exposes window.__TAURI__, so that is full IPC access).
+function safeUrl(u) {
+  return /^https?:\/\//i.test(u) ? u : "";
+}
+
+function cardHTML(m) {
+  const [cls, label] = PRIO[String(m.priority)] || ["pn", "일반"];
+  const url = safeUrl(m.url)
+    ? `<a href="${esc(safeUrl(m.url))}" target="_blank" rel="noopener">${esc(m.url_title || m.url)}</a>`
+    : "";
+  return `<article class="msg ${cls}">
+    <div class="top"><span class="title">${esc(m.title) || "(제목 없음)"}</span><span class="badge">${label}</span></div>
+    <div class="body${m.monospace ? " mono" : ""}">${esc(m.message)}</div>
+    <div class="meta"><span>${relTime(m.timestamp)}</span><span class="id">#${m.id}</span>${m.tag ? `<span class="id">${esc(m.tag)}</span>` : ""}${url}</div>
+  </article>`;
+}
+
+function render() {
+  if (!messages.length) {
+    feed.innerHTML = `<div class="empty">
+      <div class="ring"><svg viewBox="0 0 24 24"><path d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6v-5c0-3.07-1.63-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5S10.5 3.17 10.5 4v.68C7.64 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z"/></svg></div>
+      <b>수신된 메시지가 없습니다</b>
+      <p>서버로 푸시가 도착하면 여기에 표시됩니다.</p>
+    </div>`;
+    countEl.textContent = "";
+    return;
+  }
+  feed.innerHTML = messages.map(cardHTML).join("");
+  countEl.textContent = `메시지 ${messages.length}개`;
+}
+
+function setStatus(state, extra) {
+  pill.className = "pill";
+  let text = "—";
+  switch (state) {
+    case "open": pill.classList.add("open"); text = "연결됨"; break;
+    case "connecting": pill.classList.add("connecting"); text = "연결 중…"; break;
+    case "disconnected":
+    case "timeout": pill.classList.add("down"); text = "연결 끊김"; break;
+    case "error": pill.classList.add("down"); text = "오류"; break;
+    case "unconfigured": text = "설정 필요"; break;
+    default: text = "시작 중…";
+  }
+  if (state === "connecting" && extra && extra.attempt > 1) text = `재시도 ${extra.attempt}…`;
+  pillText.textContent = text;
+}
+
+function toast(text, isErr) {
+  const el = document.createElement("div");
+  el.className = "toast" + (isErr ? " err" : "");
+  el.textContent = text;
+  $("toasts").appendChild(el);
+  setTimeout(() => { el.style.opacity = "0"; setTimeout(() => el.remove(), 200); }, 3200);
+}
+
+/* ---------- live events ---------- */
+listen("pf-message", (e) => {
+  messages.unshift(e.payload);
+  if (messages.length > 100) messages.pop();
+  render();
+});
+listen("pf-history", (e) => { messages = e.payload; render(); });
+listen("pf-status", (e) => setStatus(e.payload.state, e.payload));
+
+/* ---------- settings ---------- */
+const overlay = $("overlay");
+async function openSettings() {
+  const s = await invoke("cmd_get_settings");
+  $("f-url").value = s.server_url || "";
+  $("f-device").value = s.device_id || "";
+  $("f-secret").value = s.secret || "";
+  $("f-key").value = s.e2ee_key || "";
+  $("f-autolaunch").checked = !!s.autolaunch;
+  $("f-err").textContent = "";
+  overlay.classList.add("show");
+}
+$("btn-settings").onclick = openSettings;
+$("btn-cancel").onclick = () => overlay.classList.remove("show");
+overlay.onclick = (e) => { if (e.target === overlay) overlay.classList.remove("show"); };
+
+$("btn-save").onclick = async () => {
+  $("f-err").textContent = "";
+  const s = {
+    server_url: $("f-url").value.trim(),
+    device_id: $("f-device").value.trim(),
+    secret: $("f-secret").value.trim(),
+    e2ee_key: $("f-key").value.trim(),
+    autolaunch: $("f-autolaunch").checked,
+  };
+  try {
+    await invoke("cmd_save_settings", { new_settings: s });
+    overlay.classList.remove("show");
+    toast("설정이 저장되었습니다");
+    boot();
+  } catch (err) {
+    $("f-err").textContent = String(err);
+  }
+};
+
+$("btn-clear").onclick = async () => {
+  await invoke("cmd_clear_history");
+  messages = [];
+  render();
+  toast("목록을 비웠습니다");
+};
+
+/* ---------- boot ---------- */
+async function boot() {
+  const st = await invoke("cmd_get_status");
+  serverLabel.textContent = st.configured ? st.server_url.replace(/^https?:\/\//, "") : "서버 미설정";
+  messages = st.history;
+  render();
+  setStatus(st.configured ? "connecting" : "unconfigured");
+}
+setInterval(render, 30000); // refresh relative times
+boot();
+</script>
+</body>
 </html>
