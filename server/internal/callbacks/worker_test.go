@@ -215,15 +215,6 @@ func (s *fakeStore) calledBackAt(receiptID string) (time.Time, bool) {
 // receiptAt returns a pointer to t (storage convention: nil == "not yet").
 func receiptAt(t time.Time) *time.Time { return &t }
 
-// hostOf returns u.Host (the host[:port] used as the per-host key).
-func hostOf(raw string) string {
-	u, err := url.Parse(raw)
-	if err != nil {
-		return raw
-	}
-	return u.Host
-}
-
 // newWorkerWith builds a worker over fs with an injected clock, allowing the
 // given hosts (loopback is blocked by default, so test servers must be named
 // here), a real http.Client (so httptest servers work), and the injected

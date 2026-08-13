@@ -18,6 +18,7 @@ import (
 	"net/http"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
@@ -135,8 +136,8 @@ type Bundle struct {
 // exactly one source of truth for what /metrics exposes.
 func NewBundle() *Bundle {
 	reg := prometheus.NewRegistry()
-	reg.MustRegister(prometheus.NewGoCollector())
-	reg.MustRegister(prometheus.NewProcessCollector(prometheus.ProcessCollectorOpts{}))
+	reg.MustRegister(collectors.NewGoCollector())
+	reg.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 	return &Bundle{
 		Metrics:  New(reg),
 		Handler:  promhttp.HandlerFor(reg, promhttp.HandlerOpts{}),

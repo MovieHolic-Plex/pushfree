@@ -234,16 +234,6 @@ func (r *fireRecorder) handler() timers.Handler {
 	}
 }
 
-func (r *fireRecorder) total() int {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	n := 0
-	for _, c := range r.hits {
-		n += c
-	}
-	return n
-}
-
 func (r *fireRecorder) assertAllOnce(t *testing.T, want []int64) {
 	t.Helper()
 	r.mu.Lock()
